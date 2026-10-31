@@ -323,10 +323,25 @@ constexpr size_t INK_TANKS_COUNT = sizeof(INK_TANKS) / sizeof(INK_TANKS[0]);
 // ---------------------------------------------------------------------------
 // Apply everything each frame
 // ---------------------------------------------------------------------------
+// IMPORTANT: we don't use OSGetTitleID() as the gate. When the user has the
+// v2.12.0 update installed (required for online play), the Wii U launches the
+// UPDATE title (0x0005000E-...) instead of the base game (0x00050000-...).
+// So the title ID check would always return false in practice.
+//
+// Instead, we gate on the player base pointer at 0x106E46E8:
+//   - 0 or invalid RAM  -> not in Splatoon (or game not yet initialized)
+//   - non-zero + valid  -> we're in Splatoon, apply cheats
+// ---------------------------------------------------------------------------
 static void applyAllCheats() {
-    if (!g_enabled || !isSplatoon1Running()) return;
+    if (!g_enabled) return;
 
-    // Weapon overrides
+    // Gate: only run if the player base pointer has been initialized.
+    // This is the Splatoon-specific address from Red's "Live Weapon ID Changer"
+    // code. If it's 0, we're either in the Wii U Menu or in a different game.
+    uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
+    if (basePtr == 0 || !validRam(basePtr)) return;
+
+    // Player-relative writes (weapon overrides)
     uintptr_t player = resolvePlayerStruct();
     if (player) {
         if (g_overrideMain)    writeU32(player + OFF_MAIN_WEAPON, g_mainWeaponId);
@@ -335,7 +350,9 @@ static void applyAllCheats() {
         if (g_inkTankOverride) writeU32(player + OFF_INK_TANK,    g_inkTankId);
     }
 
-    // All Red cheats
+    // All Red cheats (absolute-address ones + player-relative ones).
+    // The absolute-address cheats rely on the game's RPX being loaded,
+    // which is the case whenever the player base pointer is initialized.
     for (size_t i = 0; i < Cheats::COUNT; ++i) {
         if (g_cheatEnabled[i]) Cheats::ALL[i].apply();
     }
