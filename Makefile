@@ -13,10 +13,6 @@ include $(DEVKITPRO)/wups/share/wups_rules
 
 WUT_ROOT  := $(DEVKITPRO)/wut
 WUPS_ROOT := $(DEVKITPRO)/wups
-# libnotifications installs its headers to $DEVKITPRO/include (not
-# $DEVKITPRO/libnotifications/include), so we just add $DEVKITPRO to
-# LIBDIRS to get -I$DEVKITPRO/include on the compile line.
-NOTIF_ROOT := $(DEVKITPRO)
 
 #-------------------------------------------------------------------------------
 # Target / layout
@@ -51,10 +47,10 @@ ASFLAGS  := -g $(ARCH)
 
 LDFLAGS  = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) $(WUPSSPECS)
 
-# Plugin needs wups + wut + libnotifications (for on-screen debug toasts)
-LIBS := -lwups -lwut -lnotifications
+# Plugin needs wups + wut only (notifications removed - couldn't find header path)
+LIBS := -lwups -lwut
 
-LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT) $(NOTIF_ROOT)
+LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT)
 
 #-------------------------------------------------------------------------------
 # Boilerplate pulled from wiiu-env/ftpiiu_plugin & TCPGecko-Plugin Makefiles.

@@ -33,7 +33,6 @@
 #include <wups/config/WUPSConfigItemMultipleValues.h>
 #include <wups/config_api.h>
 #include <wups/storage.h>
-#include <notifications/notifications.h>
 
 #include "weapons.h"
 #include "syscalls.h"
@@ -121,9 +120,8 @@ OSThread* g_workerThread  = nullptr;
 uint8_t*  g_workerStack   = nullptr;
 bool      g_workerRunning = false;
 
-// Debug notification state
-bool g_notificationsReady = false;
-bool g_splatoonDetectedNotified = false;  // only show "cheats active" once per session
+// Debug state (notifications removed - couldn't find header path)
+bool g_splatoonDetectedNotified = false;  // placeholder, unused
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -361,9 +359,8 @@ static void applyAllCheats() {
         return;
     }
 
-    // First-time notification: tell the user the plugin is active in Splatoon
-    if (!g_splatoonDetectedNotified && g_notificationsReady) {
-        NotificationModule_AddInfoNotification("Splat Weapon Changer: Splatoon 1 detected, cheats applying.");
+    // First-time check passed (notifications disabled, just track flag)
+    if (!g_splatoonDetectedNotified) {
         g_splatoonDetectedNotified = true;
     }
 
@@ -594,12 +591,6 @@ static void configMenuClosed() {
 // Plugin lifecycle
 // ---------------------------------------------------------------------------
 INITIALIZE_PLUGIN() {
-    // Init NotificationModule for on-screen debug toasts
-    if (NotificationModule_InitLibrary() == NOTIFICATION_MODULE_LIBRARY_SUCCESS) {
-        g_notificationsReady = true;
-        NotificationModule_AddInfoNotification("Splat Weapon Changer plugin loaded.");
-    }
-
     WUPSConfigAPIOptionsV1 opts = {.name = "Splat Weapon Changer + Cheats"};
     WUPSConfigAPI_Init(opts, configMenuOpened, configMenuClosed);
 
@@ -626,23 +617,10 @@ INITIALIZE_PLUGIN() {
 
 DEINITIALIZE_PLUGIN() {
     stopWorker();
-    if (g_notificationsReady) {
-        NotificationModule_DeInitLibrary();
-        g_notificationsReady = false;
-    }
 }
 
 ON_APPLICATION_START() {
     startWorker();
-
-    // Show the current title ID so the user can tell us what game is running
-    // (helpful for debugging region/version mismatches)
-    if (g_notificationsReady) {
-        uint64_t tid = OSGetTitleID();
-        char buf[80];
-        snprintf(buf, sizeof(buf), "Splat plugin: app started, TID=0x%016llX", (unsigned long long)tid);
-        NotificationModule_AddInfoNotification(buf);
-    }
 }
 
 ON_APPLICATION_ENDS()  { stopWorker(); }
