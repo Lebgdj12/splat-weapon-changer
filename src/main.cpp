@@ -33,8 +33,10 @@
 #include <wups/config/WUPSConfigItemMultipleValues.h>
 #include <wups/config_api.h>
 #include <wups/storage.h>
+#include <notifications/notifications.h>
 
 #include "weapons.h"
+#include "syscalls.h"
 
 // ---------------------------------------------------------------------------
 // Plugin metadata
@@ -118,6 +120,10 @@ uint32_t g_inkTankId       = 0x00u;  // Normal ink tank
 OSThread* g_workerThread  = nullptr;
 uint8_t*  g_workerStack   = nullptr;
 bool      g_workerRunning = false;
+
+// Debug notification state
+bool g_notificationsReady = false;
+bool g_splatoonDetectedNotified = false;  // only show "cheats active" once per session
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -135,13 +141,23 @@ static void loadInt(const char* key, int& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory access
+// Memory access - via kernel syscalls
+// ---------------------------------------------------------------------------
+// CRITICAL: we use kern_read/kern_write (syscall 0x34/0x35) instead of plain
+// pointer dereferences. These syscalls run with kernel privileges and bypass
+// userspace memory protections. Without them, writes to addresses inside the
+// game's read-only RPX code section (e.g. 0x105EBE40 for Speedhack) silently
+// fail or crash the plugin. This is the approach TCPGecko-Plugin uses.
+//
+// After each write we still DCFlushRange so the data cache is flushed to
+// memory and the write is visible to the game's CPU (typically CPU0/1 while
+// our worker runs on CPU2).
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
-    return *reinterpret_cast<volatile uint32_t*>(addr);
+    return kern_read(reinterpret_cast<const void*>(addr));
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
-    *reinterpret_cast<volatile uint32_t*>(addr) = value;
+    kern_write(reinterpret_cast<void*>(addr), value);
     DCFlushRange(reinterpret_cast<void*>(addr), 4);
 }
 static inline bool validRam(uint32_t v) {
@@ -339,7 +355,17 @@ static void applyAllCheats() {
     // This is the Splatoon-specific address from Red's "Live Weapon ID Changer"
     // code. If it's 0, we're either in the Wii U Menu or in a different game.
     uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
-    if (basePtr == 0 || !validRam(basePtr)) return;
+    if (basePtr == 0 || !validRam(basePtr)) {
+        // Reset the "detected" flag so we notify again next time we enter Splatoon
+        g_splatoonDetectedNotified = false;
+        return;
+    }
+
+    // First-time notification: tell the user the plugin is active in Splatoon
+    if (!g_splatoonDetectedNotified && g_notificationsReady) {
+        NotificationModule_AddInfoNotification("Splat Weapon Changer: Splatoon 1 detected, cheats applying.");
+        g_splatoonDetectedNotified = true;
+    }
 
     // Player-relative writes (weapon overrides)
     uintptr_t player = resolvePlayerStruct();
@@ -568,6 +594,12 @@ static void configMenuClosed() {
 // Plugin lifecycle
 // ---------------------------------------------------------------------------
 INITIALIZE_PLUGIN() {
+    // Init NotificationModule for on-screen debug toasts
+    if (NotificationModule_InitLibrary() == NOTIFICATION_MODULE_LIBRARY_SUCCESS) {
+        g_notificationsReady = true;
+        NotificationModule_AddInfoNotification("Splat Weapon Changer plugin loaded.");
+    }
+
     WUPSConfigAPIOptionsV1 opts = {.name = "Splat Weapon Changer + Cheats"};
     WUPSConfigAPI_Init(opts, configMenuOpened, configMenuClosed);
 
@@ -592,8 +624,26 @@ INITIALIZE_PLUGIN() {
     WUPSStorageAPI_SaveStorage(false);
 }
 
-DEINITIALIZE_PLUGIN() { stopWorker(); }
+DEINITIALIZE_PLUGIN() {
+    stopWorker();
+    if (g_notificationsReady) {
+        NotificationModule_DeInitLibrary();
+        g_notificationsReady = false;
+    }
+}
 
-ON_APPLICATION_START() { startWorker(); }
+ON_APPLICATION_START() {
+    startWorker();
+
+    // Show the current title ID so the user can tell us what game is running
+    // (helpful for debugging region/version mismatches)
+    if (g_notificationsReady) {
+        uint64_t tid = OSGetTitleID();
+        char buf[80];
+        snprintf(buf, sizeof(buf), "Splat plugin: app started, TID=0x%016llX", (unsigned long long)tid);
+        NotificationModule_AddInfoNotification(buf);
+    }
+}
+
 ON_APPLICATION_ENDS()  { stopWorker(); }
 ON_APPLICATION_REQUESTS_EXIT() { stopWorker(); }

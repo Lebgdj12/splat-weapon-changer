@@ -39,7 +39,7 @@ endif
 CFLAGS := -g $(OPTIMIZATION) -fshort-wchar -mrvl -mcpu=750 -meabi -mhard-float \
           -ffast-math -fdata-sections -ffunction-sections -Wall -Wextra \
           -D_GNU_SOURCE -Wno-unused-parameter -Wno-strict-aliasing \
-	$(DEBUG_DEFINES) $(MACHDEP)
+        $(DEBUG_DEFINES) $(MACHDEP)
 CFLAGS += $(INCLUDE) -D__WIIU__ -D__WUT__ -D__WUPS__
 
 CXXFLAGS := $(CFLAGS) -std=gnu++20 -fno-rtti -fno-exceptions
@@ -47,10 +47,8 @@ ASFLAGS  := -g $(ARCH)
 
 LDFLAGS  = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) $(WUPSSPECS)
 
-# Plugin only needs wups + wut. libwupsbackend is not a separate lib
-# (it's folded into libwups.a in modern WUPS releases). Confirmed by
-# wiiu-env/AromaBasePlugin Makefile.
-LIBS := -lwups -lwut
+# Plugin needs wups + wut + libnotifications (for on-screen debug toasts)
+LIBS := -lwups -lwut -lnotifications
 
 LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT)
 
@@ -63,7 +61,7 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT   := $(CURDIR)/$(TARGET)
 export TOPDIR   := $(CURDIR)
 export VPATH    := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-	$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+        $(foreach dir,$(DATA),$(CURDIR)/$(dir))
 export DEPSDIR  := $(CURDIR)/$(BUILD)
 
 CFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
@@ -83,7 +81,7 @@ export OFILES     := $(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-	$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+        $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
                   -I$(CURDIR)/$(BUILD)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
@@ -92,12 +90,12 @@ export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 all: $(BUILD)
 
 $(BUILD):
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+        @[ -d $@ ] || mkdir -p $@
+        @$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 clean:
-	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).wps $(TARGET).elf $(TARGET).map
+        @echo clean ...
+        @rm -fr $(BUILD) $(TARGET).wps $(TARGET).elf $(TARGET).map
 
 else
 
