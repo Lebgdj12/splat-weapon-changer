@@ -37,6 +37,7 @@
 
 #include "weapons.h"
 #include "syscalls.h"
+#include "kernel_memory.h"
 
 // ---------------------------------------------------------------------------
 // Plugin metadata
@@ -140,23 +141,28 @@ static void loadInt(const char* key, int& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory access
+// Memory access - using the SAFE kernel copy approach (TCPGecko pattern)
 // ---------------------------------------------------------------------------
-// READS: use regular pointer dereference. Reads from mapped memory always
-// work (even from read-only pages). The address 0x106E46E8 is in the game's
-// data section when Splatoon is running, so reads are safe.
+// We use writeKernelMemory/readKernelMemory which internally use
+// SC0x25_KernelCopyData + OSEffectiveToPhysical. This is the approach
+// TCPGecko-Plugin actually uses (NOT direct kern_write).
 //
-// WRITES: use kern_write (syscall 0x35) for ALL writes. This bypasses
-// userspace read-only protections, which is required for cheats that write
-// to the game's code section (e.g. Speedhack @ 0x105EBE40). Writes to RW
-// memory (player struct) also work via kern_write.
+// Why not kern_write directly?
+// - kern_write (syscall 0x35) can crash the plugin on certain addresses
+// - SC0x25 is the official kernel data copy syscall, stable under Aroma
+// - Physical address translation bypasses ALL virtual memory protections
+// - The staging buffer ensures cache-aligned, stable source data
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
+    // For game memory (below 0xF0000000), use the safe kernel copy read.
+    // This handles both RW data section and RO code section reads.
+    if (addr < 0xF0000000u) {
+        return readKernelMemory(addr);
+    }
     return *reinterpret_cast<volatile uint32_t*>(addr);
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
-    kern_write(reinterpret_cast<void*>(addr), value);
-    DCFlushRange(reinterpret_cast<void*>(addr), 4);
+    writeKernelMemory(addr, value);
 }
 static inline bool validRam(uint32_t v) {
     return v != 0 && v >= 0x10000000u && v < 0x50000000u;
