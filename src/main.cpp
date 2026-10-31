@@ -27,6 +27,7 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <coreinit/title.h>
+#include <vpad/input.h>
 
 #include <wups.h>
 #include <wups/config/WUPSConfigItemBoolean.h>
@@ -116,7 +117,7 @@ uint32_t g_specialWeaponId = 0x02u;
 bool     g_inkTankOverride = false;
 uint32_t g_inkTankId       = 0x00u;  // Normal ink tank
 
-OSThread* g_workerThread  = nullptr;
+OSThread* g_workerThread  = nullptr;  // unused (hook-based now) but kept for ABI
 uint8_t*  g_workerStack   = nullptr;
 bool      g_workerRunning = false;
 
@@ -382,47 +383,34 @@ static void applyAllCheats() {
 }
 
 // ---------------------------------------------------------------------------
-// Worker thread
+// VPADRead hook - the cheat application point
 // ---------------------------------------------------------------------------
-static int workerMain(int, const char**) {
-    while (g_workerRunning) {
-        applyAllCheats();
-        OSSleepTicks(OSMicrosecondsToTicks(16667));
-    }
-    return 0;
+// This is the REAL pattern used by working Aroma cheat plugins (padcon,
+// SwipSwapMe, etc.). We hook VPADRead (called every frame by the game to
+// read controller state) and apply all cheats INSIDE the hook.
+//
+// This is fundamentally different from a worker thread because:
+// - The hook runs in the GAME'S context (same CPU, same memory space)
+// - No cache coherency issues (writes are immediately visible to the game)
+// - Synchronized with the frame loop (writes happen right before the game
+//   uses the values)
+// - No need for ON_APPLICATION_START thread management
+//
+// We still use kern_write for absolute addresses that might be in the
+// game's read-only code section (Speedhack @ 0x105EBE40 etc.).
+// ---------------------------------------------------------------------------
+DECL_FUNCTION(int32_t, VPADRead, int32_t chan, VPADStatus *buffer, uint32_t buffer_size, int32_t *error) {
+    // Call the original VPADRead first so input still works
+    int32_t result = real_VPADRead(chan, buffer, buffer_size, error);
+
+    // Apply all cheats - this runs every frame, in the game's context
+    applyAllCheats();
+
+    return result;
 }
 
-static bool startWorker() {
-    if (g_workerRunning) return true;
-    g_workerStack = static_cast<uint8_t*>(memalign(8, 0x8000));
-    if (!g_workerStack) return false;
-    g_workerThread = static_cast<OSThread*>(memalign(8, sizeof(OSThread)));
-    if (!g_workerThread) { free(g_workerStack); g_workerStack = nullptr; return false; }
-    if (!OSCreateThread(g_workerThread, workerMain, 0, nullptr,
-                        g_workerStack, 0x8000, 0x40,
-                        OS_THREAD_ATTRIB_AFFINITY_CPU2)) {
-        free(g_workerThread); free(g_workerStack);
-        g_workerThread = nullptr; g_workerStack = nullptr;
-        return false;
-    }
-    g_workerRunning = true;
-    OSResumeThread(g_workerThread);
-    return true;
-}
-
-static void stopWorker() {
-    if (!g_workerRunning) return;
-    g_workerRunning = false;
-    if (g_workerThread) {
-        OSJoinThread(g_workerThread, nullptr);
-        free(g_workerThread);
-        g_workerThread = nullptr;
-    }
-    if (g_workerStack) {
-        free(g_workerStack);
-        g_workerStack = nullptr;
-    }
-}
+// Tell WUPS to replace the real VPADRead with our hook.
+WUPS_MUST_REPLACE(VPADRead, WUPS_LOADER_LIBRARY_VPAD, VPADRead);
 
 // ---------------------------------------------------------------------------
 // Config menu helpers
@@ -616,12 +604,13 @@ INITIALIZE_PLUGIN() {
 }
 
 DEINITIALIZE_PLUGIN() {
-    stopWorker();
+    // Nothing to clean up - we use VPADRead hook, not a thread
 }
 
 ON_APPLICATION_START() {
-    startWorker();
+    // Hook is auto-installed by WUPS_MUST_REPLACE macro at plugin load.
+    // No thread management needed.
 }
 
-ON_APPLICATION_ENDS()  { stopWorker(); }
-ON_APPLICATION_REQUESTS_EXIT() { stopWorker(); }
+ON_APPLICATION_ENDS()  {}
+ON_APPLICATION_REQUESTS_EXIT() {}
