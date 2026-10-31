@@ -140,20 +140,19 @@ static void loadInt(const char* key, int& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory access - via kernel syscalls
+// Memory access
 // ---------------------------------------------------------------------------
-// CRITICAL: we use kern_read/kern_write (syscall 0x34/0x35) instead of plain
-// pointer dereferences. These syscalls run with kernel privileges and bypass
-// userspace memory protections. Without them, writes to addresses inside the
-// game's read-only RPX code section (e.g. 0x105EBE40 for Speedhack) silently
-// fail or crash the plugin. This is the approach TCPGecko-Plugin uses.
+// READS: use regular pointer dereference. Reads from mapped memory always
+// work (even from read-only pages). The address 0x106E46E8 is in the game's
+// data section when Splatoon is running, so reads are safe.
 //
-// After each write we still DCFlushRange so the data cache is flushed to
-// memory and the write is visible to the game's CPU (typically CPU0/1 while
-// our worker runs on CPU2).
+// WRITES: use kern_write (syscall 0x35) for ALL writes. This bypasses
+// userspace read-only protections, which is required for cheats that write
+// to the game's code section (e.g. Speedhack @ 0x105EBE40). Writes to RW
+// memory (player struct) also work via kern_write.
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
-    return kern_read(reinterpret_cast<const void*>(addr));
+    return *reinterpret_cast<volatile uint32_t*>(addr);
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
     kern_write(reinterpret_cast<void*>(addr), value);
@@ -163,11 +162,27 @@ static inline bool validRam(uint32_t v) {
     return v != 0 && v >= 0x10000000u && v < 0x50000000u;
 }
 
+// Check if we're in a game application (not system menu/etc).
+// Title ID upper 32 bits: 0x00050000 = base game, 0x0005000E = game update.
+// When the v2.12.0 update is installed, the Wii U launches the update title
+// (0x0005000E-...) instead of the base game (0x00050000-...).
+static bool isInGameApp() {
+    uint64_t tid = OSGetTitleID();
+    uint32_t upper = static_cast<uint32_t>(tid >> 32);
+    return upper == 0x00050000u || upper == 0x0005000Eu;
+}
+
+// Check if we're specifically in Splatoon 1 (any region, base or update).
+// Lower 32 bits of the title ID are game-specific:
+//   EUR: 0x10162200  | USA: 0x10112300  | JPN: 0x10110F00
+// If you're on a region not listed here, add your title ID's lower 32 bits.
 static bool isSplatoon1Running() {
-    const uint64_t tid = OSGetTitleID();
-    return tid == TITLE_SPLATOON1_EUR ||
-           tid == TITLE_SPLATOON1_USA ||
-           tid == TITLE_SPLATOON1_JPN;
+    if (!isInGameApp()) return false;
+    uint64_t tid = OSGetTitleID();
+    uint32_t lower = static_cast<uint32_t>(tid & 0xFFFFFFFFu);
+    return lower == 0x10162200u ||  // EUR
+           lower == 0x10112300u ||  // USA
+           lower == 0x10110F00u;    // JPN
 }
 
 static uintptr_t resolvePlayerStruct() {
@@ -350,17 +365,24 @@ constexpr size_t INK_TANKS_COUNT = sizeof(INK_TANKS) / sizeof(INK_TANKS[0]);
 static void applyAllCheats() {
     if (!g_enabled) return;
 
-    // Gate: only run if the player base pointer has been initialized.
-    // This is the Splatoon-specific address from Red's "Live Weapon ID Changer"
-    // code. If it's 0, we're either in the Wii U Menu or in a different game.
-    uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
-    if (basePtr == 0 || !validRam(basePtr)) {
-        // Reset the "detected" flag so we notify again next time we enter Splatoon
+    // GATE 1: Title ID check. CRITICAL - prevents crashes when not in Splatoon.
+    // The VPADRead hook runs in EVERY app (Wii U Menu, settings, etc.). If we
+    // try to read 0x106E46E8 in a non-Splatoon context, the address might be
+    // unmapped → DSI crash → Wii U reboots.
+    if (!isSplatoon1Running()) {
         g_splatoonDetectedNotified = false;
         return;
     }
 
-    // First-time check passed (notifications disabled, just track flag)
+    // GATE 2: Player base pointer must be initialized (game loaded past menu).
+    // Safe to read now - we know we're in Splatoon, so 0x106E46E8 is mapped.
+    uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
+    if (basePtr == 0 || !validRam(basePtr)) {
+        g_splatoonDetectedNotified = false;
+        return;
+    }
+
+    // Past both gates - mark as detected
     if (!g_splatoonDetectedNotified) {
         g_splatoonDetectedNotified = true;
     }
@@ -375,8 +397,6 @@ static void applyAllCheats() {
     }
 
     // All Red cheats (absolute-address ones + player-relative ones).
-    // The absolute-address cheats rely on the game's RPX being loaded,
-    // which is the case whenever the player base pointer is initialized.
     for (size_t i = 0; i < Cheats::COUNT; ++i) {
         if (g_cheatEnabled[i]) Cheats::ALL[i].apply();
     }
