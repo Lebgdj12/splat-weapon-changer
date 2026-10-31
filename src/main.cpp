@@ -192,29 +192,24 @@ static bool isSplatoon1Running() {
 }
 
 static uintptr_t resolvePlayerStruct() {
-    if (PLAYER_BASE_PTR_ADDR < 0x10000000u || PLAYER_BASE_PTR_ADDR >= 0x50000000u) return 0;
+    // Relaxed validation: just check non-zero.
+    // The strict validRam check was rejecting valid player struct addresses.
+    // arGecko doesn't use strict range checks either.
     uint32_t p1 = readU32(PLAYER_BASE_PTR_ADDR);
-    if (!validRam(p1)) return 0;
-    uintptr_t p2Addr = p1 + 0x290u;
-    if (p2Addr >= 0x50000000u) return 0;
-    uint32_t p2 = readU32(p2Addr);
-    if (!validRam(p2)) return 0;
+    if (p1 == 0) return 0;
+    uint32_t p2 = readU32(p1 + 0x290u);
+    if (p2 == 0) return 0;
     return p2;
 }
 
 // Weapon struct chain: [0x106E417C] + 0x578 -> +0x760 -> weapon struct
 static uintptr_t resolveWeaponStruct() {
-    if (WEAPON_BASE_PTR_ADDR < 0x10000000u || WEAPON_BASE_PTR_ADDR >= 0x50000000u) return 0;
     uint32_t p1 = readU32(WEAPON_BASE_PTR_ADDR);
-    if (!validRam(p1)) return 0;
-    uintptr_t p2Addr = p1 + 0x578u;
-    if (p2Addr >= 0x50000000u) return 0;
-    uint32_t p2 = readU32(p2Addr);
-    if (!validRam(p2)) return 0;
-    uintptr_t p3Addr = p2 + 0x760u;
-    if (p3Addr >= 0x50000000u) return 0;
-    uint32_t p3 = readU32(p3Addr);
-    if (!validRam(p3)) return 0;
+    if (p1 == 0) return 0;
+    uint32_t p2 = readU32(p1 + 0x578u);
+    if (p2 == 0) return 0;
+    uint32_t p3 = readU32(p2 + 0x760u);
+    if (p3 == 0) return 0;
     return p3;
 }
 
@@ -383,7 +378,7 @@ static void applyAllCheats() {
 
     // Now safe to read game memory - we're in a game app
     uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
-    if (basePtr == 0 || !validRam(basePtr)) return;
+    if (basePtr == 0) return;
 
     // Player-relative writes (weapon overrides)
     uintptr_t player = resolvePlayerStruct();
