@@ -47,8 +47,10 @@ ASFLAGS  := -g $(ARCH)
 
 LDFLAGS  = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) $(WUPSSPECS)
 
-# Plugin only needs wups + wut. libnotifications / libmocha not used.
-LIBS := -lwups -lwut -lwupsbackend
+# Plugin only needs wups + wut. libwupsbackend is not a separate lib
+# (it's folded into libwups.a in modern WUPS releases). Confirmed by
+# wiiu-env/AromaBasePlugin Makefile.
+LIBS := -lwups -lwut
 
 LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT)
 
@@ -90,12 +92,12 @@ export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 all: $(BUILD)
 
 $(BUILD):
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+        @[ -d $@ ] || mkdir -p $@
+        @$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 clean:
-	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).wps $(TARGET).elf $(TARGET).map
+        @echo clean ...
+        @rm -fr $(BUILD) $(TARGET).wps $(TARGET).elf $(TARGET).map
 
 else
 
