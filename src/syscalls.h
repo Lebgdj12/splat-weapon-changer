@@ -18,7 +18,7 @@
 #ifndef WUPS_SYSCALLS_H
 #define WUPS_SYSCALLS_H
 
-#include <cstdint>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
