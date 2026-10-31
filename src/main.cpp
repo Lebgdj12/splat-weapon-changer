@@ -27,7 +27,8 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <coreinit/title.h>
-#include <vpad/input.h>
+#include <gx2/surface.h>
+#include <gx2/swap.h>
 
 #include <wups.h>
 #include <wups/config/WUPSConfigItemBoolean.h>
@@ -36,8 +37,6 @@
 #include <wups/storage.h>
 
 #include "weapons.h"
-#include "syscalls.h"
-#include "kernel_memory.h"
 
 // ---------------------------------------------------------------------------
 // Plugin metadata
@@ -141,28 +140,23 @@ static void loadInt(const char* key, int& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory access - using the SAFE kernel copy approach (TCPGecko pattern)
+// Memory access - REGULAR pointer dereference (no kernel syscalls)
 // ---------------------------------------------------------------------------
-// We use writeKernelMemory/readKernelMemory which internally use
-// SC0x25_KernelCopyData + OSEffectiveToPhysical. This is the approach
-// TCPGecko-Plugin actually uses (NOT direct kern_write).
+// Since we hook GX2CopyColorBufferToScanBuffer, we run in the GAME'S context.
+// Regular pointer dereference works for:
+// - Reads from any mapped memory (RW or RO)
+// - Writes to RW memory (player struct, data section)
 //
-// Why not kern_write directly?
-// - kern_write (syscall 0x35) can crash the plugin on certain addresses
-// - SC0x25 is the official kernel data copy syscall, stable under Aroma
-// - Physical address translation bypasses ALL virtual memory protections
-// - The staging buffer ensures cache-aligned, stable source data
+// Regular writes to RO memory (code section) would cause a DSI crash, so
+// we SKIP all absolute-address cheats (Speedhack @ 0x105EBE40 etc.) and
+// only do player-relative writes (which are in RW data section).
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
-    // For game memory (below 0xF0000000), use the safe kernel copy read.
-    // This handles both RW data section and RO code section reads.
-    if (addr < 0xF0000000u) {
-        return readKernelMemory(addr);
-    }
     return *reinterpret_cast<volatile uint32_t*>(addr);
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
-    writeKernelMemory(addr, value);
+    *reinterpret_cast<volatile uint32_t*>(addr) = value;
+    DCFlushRange(reinterpret_cast<void*>(addr), 4);
 }
 static inline bool validRam(uint32_t v) {
     return v != 0 && v >= 0x10000000u && v < 0x50000000u;
@@ -402,41 +396,44 @@ static void applyAllCheats() {
         if (g_inkTankOverride) writeU32(player + OFF_INK_TANK,    g_inkTankId);
     }
 
-    // All Red cheats (absolute-address ones + player-relative ones).
+    // All Red cheats - but ONLY player-relative ones (safe with regular writes).
+    // Absolute-address cheats (Speedhack @ 0x105EBE40 etc.) are SKIPPED because
+    // they write to the game's read-only code section, which would cause a DSI
+    // crash with regular pointer writes. They need kernel syscalls which we're
+    // not using in this version for stability.
+    // Indices to skip: 0=Speedhack, 1=MiniJump, 8=CoverSquid, 11=Squidflop,
+    //                   14=ShooterRapid, 15=ChargerRange
     for (size_t i = 0; i < Cheats::COUNT; ++i) {
-        if (g_cheatEnabled[i]) Cheats::ALL[i].apply();
+        if (!g_cheatEnabled[i]) continue;
+        if (i == 0 || i == 1 || i == 8 || i == 11 || i == 14 || i == 15) continue;  // skip absolute
+        Cheats::ALL[i].apply();
     }
 }
 
 // ---------------------------------------------------------------------------
-// VPADRead hook - the cheat application point
+// GX2CopyColorBufferToScanBuffer hook - the cheat application point
 // ---------------------------------------------------------------------------
-// This is the REAL pattern used by working Aroma cheat plugins (padcon,
-// SwipSwapMe, etc.). We hook VPADRead (called every frame by the game to
-// read controller state) and apply all cheats INSIDE the hook.
+// This is EXACTLY the hook SwipSwapMe uses (and it works in production).
+// GX2CopyColorBufferToScanBuffer is called every frame by the game's render
+// loop to copy the rendered color buffer to the scan buffer for display.
 //
-// This is fundamentally different from a worker thread because:
-// - The hook runs in the GAME'S context (same CPU, same memory space)
-// - No cache coherency issues (writes are immediately visible to the game)
-// - Synchronized with the frame loop (writes happen right before the game
-//   uses the values)
-// - No need for ON_APPLICATION_START thread management
-//
-// We still use kern_write for absolute addresses that might be in the
-// game's read-only code section (Speedhack @ 0x105EBE40 etc.).
+// We hook it, call the original first (so rendering still works), then apply
+// all cheats. This runs in the GAME'S context:
+// - Same CPU as the game (no cache coherency issues)
+// - Same memory space (writes immediately visible)
+// - Synchronized with the frame loop
 // ---------------------------------------------------------------------------
-DECL_FUNCTION(int32_t, VPADRead, int32_t chan, VPADStatus *buffer, uint32_t buffer_size, int32_t *error) {
-    // Call the original VPADRead first so input still works
-    int32_t result = real_VPADRead(chan, buffer, buffer_size, error);
+DECL_FUNCTION(void, GX2CopyColorBufferToScanBuffer, GX2ColorBuffer *colorBuffer, GX2ScanTarget scan_target) {
+    // Call the original first so rendering still works
+    real_GX2CopyColorBufferToScanBuffer(colorBuffer, scan_target);
 
-    // Apply all cheats - this runs every frame, in the game's context
+    // Apply all cheats - runs every frame, in game context
     applyAllCheats();
-
-    return result;
 }
 
-// Tell WUPS to replace the real VPADRead with our hook.
-WUPS_MUST_REPLACE(VPADRead, WUPS_LOADER_LIBRARY_VPAD, VPADRead);
+// Tell WUPS to replace the real GX2CopyColorBufferToScanBuffer with our hook.
+// WUPS_LOADER_LIBRARY_GX2 = the GX2 library (loaded by every game that renders graphics).
+WUPS_MUST_REPLACE(GX2CopyColorBufferToScanBuffer, WUPS_LOADER_LIBRARY_GX2, GX2CopyColorBufferToScanBuffer);
 
 // ---------------------------------------------------------------------------
 // Config menu helpers
