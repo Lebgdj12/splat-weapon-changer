@@ -195,9 +195,10 @@ static bool isSplatoon1Running() {
            lower == 0x10110F00u;    // JPN
 }
 
-// Resolve the player struct via pointer chain: [*0x106E46E8] + 0x290
+// Resolve the player struct via pointer chain: [*0x106E46E8] + 0x290 -> player struct
 // Uses safeReadU32 to check OSEffectiveToPhysical before each read.
 // This prevents DSI crashes from reading invalid addresses.
+// NOTE: Only use this for codes that use codetype 0x1D (dereference at 0x290).
 static uintptr_t resolvePlayerStruct() {
     uint32_t p1;
     if (!safeReadU32(PLAYER_BASE_PTR_ADDR, &p1)) return 0;
@@ -206,6 +207,15 @@ static uintptr_t resolvePlayerStruct() {
     if (!safeReadU32(p1 + 0x290u, &p2)) return 0;
     if (p2 == 0) return 0;
     return p2;
+}
+
+// Resolve the BASE pointer (no dereference): just *0x106E46E8
+// Use this for codes that use codetype 0x30 + 0x00 (NO 0x1D dereference).
+// Many Red codes write to basePtr + offset WITHOUT dereferencing at 0x290.
+static uintptr_t resolveBasePointer() {
+    uint32_t p1;
+    if (!safeReadU32(PLAYER_BASE_PTR_ADDR, &p1)) return 0;
+    return p1;
 }
 
 // Weapon struct chain: [0x106E417C] + 0x578 -> +0x760 -> weapon struct
@@ -275,17 +285,20 @@ static void CoverSquidForm() {
 }
 
 // --- Ink ---
+// FIX: Infinite Ink uses basePtr + 0x760 + 0x1C (NO dereference at 0x290)
+// Red's code: 30000000 106E46E8 / 31000000 00000760 / 31000000 0000001C / 00120000 3F800000
+// The 0x31 codetype ADDS offset (no dereference), unlike 0x1D which dereferences.
 static void InfiniteInk() {
-    // Red's code does a complex pointer chain; the essence is writing 1.0f
-    // (0x3F800000) to the ink tank fill ratio.
-    uintptr_t p = resolvePlayerStruct();
-    if (p) writeU32(p + OFF_INK_TANK_FULL + 0x1Cu, 0x3F800000u);
+    uintptr_t base = resolveBasePointer();
+    if (base) writeU32(base + 0x760u + 0x1Cu, 0x3F800000u);  // 1.0f ink fill
 }
+// FIX: Normal Speed on Enemy Ink uses basePtr + 0x8A0 and +0x8A4 (NO dereference)
+// Red's code: 30000000 106E46E8 / 001208A0 3E000000 / 001208A4 3E000000
 static void NormalSpeedEnemyInk() {
-    uintptr_t p = resolvePlayerStruct();
-    if (p) {
-        writeU32(p + OFF_ENEMY_INK_SPD1, 0x3E000000u);
-        writeU32(p + OFF_ENEMY_INK_SPD2, 0x3E000000u);
+    uintptr_t base = resolveBasePointer();
+    if (base) {
+        writeU32(base + OFF_ENEMY_INK_SPD1, 0x3E000000u);
+        writeU32(base + OFF_ENEMY_INK_SPD2, 0x3E000000u);
     }
 }
 static void ViableSquidflop() {
@@ -376,23 +389,25 @@ static void FastBubblerCharge() {
 }
 
 // --- Ink Tank Refiller (hold L to refill ink) ---
+// FIX: Uses basePtr + 0x760 + 0x1C (same address as Infinite Ink)
 static void InkTankRefiller() {
     VPADStatus status;
     VPADReadError error;
     VPADRead(VPAD_CHAN_0, &status, 1, &error);
     if (error != VPAD_READ_SUCCESS) return;
     if (status.hold & VPAD_BUTTON_L) {
-        uintptr_t p = resolvePlayerStruct();
-        if (p) writeU32(p + OFF_INK_TANK_FULL + 0x1Cu, 0x3F800000u);  // full ink
+        uintptr_t base = resolveBasePointer();
+        if (base) writeU32(base + 0x760u + 0x1Cu, 0x3F800000u);  // full ink
     }
 }
 
 // --- Walk on Enemy Ink (no slowdown, no damage) ---
+// FIX: Uses basePtr + 0x8A0 and +0x8A4 (same as Normal Speed but with 1.0f)
 static void WalkEnemyInk() {
-    uintptr_t p = resolvePlayerStruct();
-    if (p) {
-        writeU32(p + OFF_ENEMY_INK_SPD1, 0x3F800000u);  // 1.0f = normal speed
-        writeU32(p + OFF_ENEMY_INK_SPD2, 0x3F800000u);
+    uintptr_t base = resolveBasePointer();
+    if (base) {
+        writeU32(base + OFF_ENEMY_INK_SPD1, 0x3F800000u);  // 1.0f = full normal speed
+        writeU32(base + OFF_ENEMY_INK_SPD2, 0x3F800000u);
     }
 }
 
@@ -418,17 +433,14 @@ static const Cheat ALL[] = {
     {"Shooter & Blaster Rapidfire",   "ch_shooterRapid",   false, ShooterBlasterRapidfire},
     {"Extended Charger Range",        "ch_chargerRange",   false, ExtendedChargerRange},
     {"Shooter Rapidfire (advanced)",  "ch_shooterRapidAdv",false, ShooterRapidfireAdv},
-    // Fun / Extras
+    // Fun / Extras (all verified against Red's AGME01.xml)
     {"Team Changer (D-Pad L/R)",      "ch_teamChanger",    false, TeamChanger},
     {"Freefly (hold A to fly)",       "ch_freefly",        false, Freefly},
     {"Ink Tank Refiller (hold L)",    "ch_inkRefiller",    false, InkTankRefiller},
     {"Walk on Enemy Ink",             "ch_walkEnemyInk",   false, WalkEnemyInk},
-    {"Infinite Special Meter",        "ch_infSpecial",     false, InfiniteSpecial},
-    // Special weapons
+    // Special weapons (verified addresses from Red's XML)
     {"Fast Inkstrike Charge",         "ch_fastInkstrike",  false, FastInkstrike},
     {"Fast Killer Wail Charge",       "ch_fastKillerWail", false, FastKillerWail},
-    {"Fast Bubbler Charge",           "ch_fastBubbler",    false, FastBubblerCharge},
-    {"Big Ball (huge ink shots)",     "ch_bigBall",        false, BigBall},
 };
 
 constexpr size_t COUNT = sizeof(ALL) / sizeof(ALL[0]);
@@ -478,13 +490,17 @@ static void applyAllCheats() {
     uintptr_t player = resolvePlayerStruct();
 
     // --- Weapon overrides with UNDO/RESTORE ---
-    // When override is enabled: save original value on first apply, then write cheat value
-    // When override is disabled: restore original value once, then stop
-    static uint32_t origMainWeapon = 0, origSubWeapon = 0, origSpecialWeapon = 0, origInkTank = 0;
-    static bool origMainSaved = false, origSubSaved = false, origSpecSaved = false, origInkSaved = false;
+    // IMPORTANT: main weapon uses player struct (dereferenced via 0x1D at +0x290)
+    // but sub-weapon uses BASE pointer (NO dereference) - they're at DIFFERENT addresses!
+    // Main weapon: Red's code uses codetype 0x1D → *(*0x106E46E8 + 0x290) + 0x78
+    // Sub weapon:  Red's code uses NO 0x1D → (*0x106E46E8) + 0x7C
+    static uint32_t origMainWeapon = 0, origSubWeapon = 0, origInkTank = 0;
+    static bool origMainSaved = false, origSubSaved = false, origInkSaved = false;
+
+    uintptr_t base = resolveBasePointer();
 
     if (player) {
-        // Main weapon
+        // Main weapon (uses player struct - dereferenced)
         if (g_overrideMain) {
             if (!origMainSaved) {
                 uint32_t val;
@@ -498,38 +514,31 @@ static void applyAllCheats() {
             writeU32(player + OFF_MAIN_WEAPON, origMainWeapon);
             origMainSaved = false;
         }
+    } else {
+        origMainSaved = false;
+    }
 
-        // Sub weapon
+    // Sub weapon (uses BASE pointer - NOT dereferenced)
+    if (base) {
         if (g_overrideSub) {
             if (!origSubSaved) {
                 uint32_t val;
-                if (safeReadU32(player + OFF_SUB_WEAPON, &val)) {
+                if (safeReadU32(base + OFF_SUB_WEAPON, &val)) {
                     origSubWeapon = val;
                     origSubSaved = true;
                 }
             }
-            writeU32(player + OFF_SUB_WEAPON, g_subWeaponId);
+            writeU32(base + OFF_SUB_WEAPON, g_subWeaponId);
         } else if (origSubSaved) {
-            writeU32(player + OFF_SUB_WEAPON, origSubWeapon);
+            writeU32(base + OFF_SUB_WEAPON, origSubWeapon);
             origSubSaved = false;
         }
+    } else {
+        origSubSaved = false;
+    }
 
-        // Special weapon
-        if (g_overrideSpecial) {
-            if (!origSpecSaved) {
-                uint32_t val;
-                if (safeReadU32(player + OFF_SPECIAL, &val)) {
-                    origSpecialWeapon = val;
-                    origSpecSaved = true;
-                }
-            }
-            writeU32(player + OFF_SPECIAL, g_specialWeaponId);
-        } else if (origSpecSaved) {
-            writeU32(player + OFF_SPECIAL, origSpecialWeapon);
-            origSpecSaved = false;
-        }
-
-        // Ink tank
+    // Ink tank (uses player struct - Red's code uses 0x1D)
+    if (player) {
         if (g_inkTankOverride) {
             if (!origInkSaved) {
                 uint32_t val;
@@ -544,9 +553,12 @@ static void applyAllCheats() {
             origInkSaved = false;
         }
     } else {
-        // Player struct not resolved (not in match) - reset saved originals
-        origMainSaved = origSubSaved = origSpecSaved = origInkSaved = false;
+        origInkSaved = false;
     }
+
+    // Special weapon override - DISABLED (unverified offset, would need Red's code)
+    // The special weapon code in Red's XML is complex (multiple offsets, not a simple
+    // write at player+0x80). Removed to avoid writing to wrong addresses.
 
     // All Red cheats - KernelWriteU32 checks OSEffectiveToPhysical before
     // each write, so invalid addresses are safely skipped.
@@ -740,7 +752,7 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[16].key, Cheats::ALL[16].name, Cheats::ALL[16].defaultValue, g_cheatEnabled[16], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[16]=v; storeBool(Cheats::ALL[16].key, v); });
     }
 
-    // ---- Cheats - Extras (Team Changer, Freefly, Special weapons, etc.) ----
+    // ---- Cheats - Extras (verified cheats only, no fakes) ----
     {
         MAKE_CATEGORY(cat, root, "Cheats - Extras");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[17].key, Cheats::ALL[17].name, Cheats::ALL[17].defaultValue, g_cheatEnabled[17], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[17]=v; storeBool(Cheats::ALL[17].key, v); });
@@ -749,9 +761,6 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[20].key, Cheats::ALL[20].name, Cheats::ALL[20].defaultValue, g_cheatEnabled[20], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[20]=v; storeBool(Cheats::ALL[20].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[21].key, Cheats::ALL[21].name, Cheats::ALL[21].defaultValue, g_cheatEnabled[21], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[21]=v; storeBool(Cheats::ALL[21].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[22].key, Cheats::ALL[22].name, Cheats::ALL[22].defaultValue, g_cheatEnabled[22], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[22]=v; storeBool(Cheats::ALL[22].key, v); });
-        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[23].key, Cheats::ALL[23].name, Cheats::ALL[23].defaultValue, g_cheatEnabled[23], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[23]=v; storeBool(Cheats::ALL[23].key, v); });
-        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[24].key, Cheats::ALL[24].name, Cheats::ALL[24].defaultValue, g_cheatEnabled[24], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[24]=v; storeBool(Cheats::ALL[24].key, v); });
-        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[25].key, Cheats::ALL[25].name, Cheats::ALL[25].defaultValue, g_cheatEnabled[25], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[25]=v; storeBool(Cheats::ALL[25].key, v); });
     }
 
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
