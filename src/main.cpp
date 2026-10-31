@@ -347,6 +347,55 @@ static void BigBall() {
     if (p) writeU32(p + 0x80u, 0x42000000u);  // special weapon size = 32.0f
 }
 
+// --- Freefly (hold A to fly freely) ---
+// Like Moonjump but button-activated. When A is held, zero out Y velocity
+// so you float. Move with the stick.
+static void Freefly() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (status.hold & VPAD_BUTTON_A) {
+        uintptr_t p = resolvePlayerStruct();
+        if (p) {
+            writeU32(p + OFF_MOONJUMP_Y, 0);
+            writeU32(p + OFF_MOONJUMP_VEL, 0);
+        }
+    }
+}
+
+// --- Infinite Special Meter (always have special ready) ---
+static void InfiniteSpecial() {
+    uintptr_t p = resolvePlayerStruct();
+    if (p) writeU32(p + 0x7FCu, 0x0FFFFFFFu);  // special charge = max
+}
+
+// --- Fast Bubbler Charge ---
+static void FastBubblerCharge() {
+    writeU32(0x10509904u, 0x3F800000u);  // instant bubble charge
+}
+
+// --- Ink Tank Refiller (hold L to refill ink) ---
+static void InkTankRefiller() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (status.hold & VPAD_BUTTON_L) {
+        uintptr_t p = resolvePlayerStruct();
+        if (p) writeU32(p + OFF_INK_TANK_FULL + 0x1Cu, 0x3F800000u);  // full ink
+    }
+}
+
+// --- Walk on Enemy Ink (no slowdown, no damage) ---
+static void WalkEnemyInk() {
+    uintptr_t p = resolvePlayerStruct();
+    if (p) {
+        writeU32(p + OFF_ENEMY_INK_SPD1, 0x3F800000u);  // 1.0f = normal speed
+        writeU32(p + OFF_ENEMY_INK_SPD2, 0x3F800000u);
+    }
+}
+
 static const Cheat ALL[] = {
     // Movement
     {"Speedhack",                     "ch_speedhack",      false, Speedhack},
@@ -371,9 +420,14 @@ static const Cheat ALL[] = {
     {"Shooter Rapidfire (advanced)",  "ch_shooterRapidAdv",false, ShooterRapidfireAdv},
     // Fun / Extras
     {"Team Changer (D-Pad L/R)",      "ch_teamChanger",    false, TeamChanger},
+    {"Freefly (hold A to fly)",       "ch_freefly",        false, Freefly},
+    {"Ink Tank Refiller (hold L)",    "ch_inkRefiller",    false, InkTankRefiller},
+    {"Walk on Enemy Ink",             "ch_walkEnemyInk",   false, WalkEnemyInk},
+    {"Infinite Special Meter",        "ch_infSpecial",     false, InfiniteSpecial},
     // Special weapons
     {"Fast Inkstrike Charge",         "ch_fastInkstrike",  false, FastInkstrike},
     {"Fast Killer Wail Charge",       "ch_fastKillerWail", false, FastKillerWail},
+    {"Fast Bubbler Charge",           "ch_fastBubbler",    false, FastBubblerCharge},
     {"Big Ball (huge ink shots)",     "ch_bigBall",        false, BigBall},
 };
 
@@ -686,13 +740,18 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[16].key, Cheats::ALL[16].name, Cheats::ALL[16].defaultValue, g_cheatEnabled[16], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[16]=v; storeBool(Cheats::ALL[16].key, v); });
     }
 
-    // ---- Cheats - Extras (Team Changer + Special weapons) ----
+    // ---- Cheats - Extras (Team Changer, Freefly, Special weapons, etc.) ----
     {
         MAKE_CATEGORY(cat, root, "Cheats - Extras");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[17].key, Cheats::ALL[17].name, Cheats::ALL[17].defaultValue, g_cheatEnabled[17], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[17]=v; storeBool(Cheats::ALL[17].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[18].key, Cheats::ALL[18].name, Cheats::ALL[18].defaultValue, g_cheatEnabled[18], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[18]=v; storeBool(Cheats::ALL[18].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[19].key, Cheats::ALL[19].name, Cheats::ALL[19].defaultValue, g_cheatEnabled[19], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[19]=v; storeBool(Cheats::ALL[19].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[20].key, Cheats::ALL[20].name, Cheats::ALL[20].defaultValue, g_cheatEnabled[20], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[20]=v; storeBool(Cheats::ALL[20].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[21].key, Cheats::ALL[21].name, Cheats::ALL[21].defaultValue, g_cheatEnabled[21], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[21]=v; storeBool(Cheats::ALL[21].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[22].key, Cheats::ALL[22].name, Cheats::ALL[22].defaultValue, g_cheatEnabled[22], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[22]=v; storeBool(Cheats::ALL[22].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[23].key, Cheats::ALL[23].name, Cheats::ALL[23].defaultValue, g_cheatEnabled[23], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[23]=v; storeBool(Cheats::ALL[23].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[24].key, Cheats::ALL[24].name, Cheats::ALL[24].defaultValue, g_cheatEnabled[24], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[24]=v; storeBool(Cheats::ALL[24].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[25].key, Cheats::ALL[25].name, Cheats::ALL[25].defaultValue, g_cheatEnabled[25], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[25]=v; storeBool(Cheats::ALL[25].key, v); });
     }
 
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
