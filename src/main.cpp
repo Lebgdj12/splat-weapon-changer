@@ -15,9 +15,9 @@
 
 #include <cstdint>
 #include <cstring>
+#include <malloc.h>
 
 #include <coreinit/cache.h>
-#include <coreinit/memory.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <coreinit/title.h>
@@ -114,7 +114,7 @@ static inline uint32_t readU32(uintptr_t addr) {
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
     *reinterpret_cast<volatile uint32_t*>(addr) = value;
-    OSEffectiveFlushToDirtyMemory(addr, 4);
+    DCFlushRange(reinterpret_cast<void*>(addr), 4);
 }
 
 static bool isSplatoon1Running() {
@@ -167,13 +167,13 @@ static bool startWorker() {
     if (g_workerRunning) return true;
 
     g_workerStack = static_cast<uint8_t*>(
-        MEMAllocFromDefaultHeapEx(0x8000, 8));
+        memalign(8, 0x8000));
     if (!g_workerStack) return false;
 
     g_workerThread = static_cast<OSThread*>(
-        MEMAllocFromDefaultHeapEx(sizeof(OSThread), 8));
+        memalign(8, sizeof(OSThread)));
     if (!g_workerThread) {
-        MEMFreeToDefaultHeap(g_workerStack);
+        free(g_workerStack);
         g_workerStack = nullptr;
         return false;
     }
@@ -182,8 +182,8 @@ static bool startWorker() {
             g_workerThread, workerMain, 0, nullptr,
             g_workerStack, 0x8000, 0x40,
             OS_THREAD_ATTRIB_AFFINITY_CPU2)) {
-        MEMFreeToDefaultHeap(g_workerThread);
-        MEMFreeToDefaultHeap(g_workerStack);
+        free(g_workerThread);
+        free(g_workerStack);
         g_workerThread = nullptr;
         g_workerStack  = nullptr;
         return false;
@@ -199,11 +199,11 @@ static void stopWorker() {
     g_workerRunning = false;
     if (g_workerThread) {
         OSJoinThread(g_workerThread, nullptr);
-        MEMFreeToDefaultHeap(g_workerThread);
+        free(g_workerThread);
         g_workerThread = nullptr;
     }
     if (g_workerStack) {
-        MEMFreeToDefaultHeap(g_workerStack);
+        free(g_workerStack);
         g_workerStack = nullptr;
     }
 }
@@ -216,7 +216,7 @@ static void stopWorker() {
 static ConfigItemMultipleValuesPair* makePairs(
     const splat::WeaponEntry* entries, size_t count) {
     auto* p = static_cast<ConfigItemMultipleValuesPair*>(
-        MEMAllocFromDefaultHeap(sizeof(ConfigItemMultipleValuesPair) * count));
+        malloc(sizeof(ConfigItemMultipleValuesPair) * count));
     if (!p) return nullptr;
     for (size_t i = 0; i < count; ++i) {
         p[i].value = entries[i].id;
