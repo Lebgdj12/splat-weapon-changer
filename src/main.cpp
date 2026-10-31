@@ -31,6 +31,7 @@
 #include <proc_ui/procui.h>
 #include <gx2/surface.h>
 #include <gx2/swap.h>
+#include <vpad/input.h>
 
 #include <wups.h>
 #include <wups/config/WUPSConfigItemBoolean.h>
@@ -310,12 +311,40 @@ static void ExtendedChargerRange() {
     writeU32(ADDR_CHARGER_RANGE, 0x40000000u);
 }
 static void ShooterRapidfireAdv() {
-    // Writes to weapon struct: +0x50 = 0 (rate), +0x48 = 2.0f (speed)
     uintptr_t w = resolveWeaponStruct();
     if (w) {
         writeU32(w + 0x50u, 0x00000000u);
         writeU32(w + 0x48u, 0x40000000u);
     }
+}
+
+// --- Team Changer (button-activated: D-Pad Left = Alpha, Right = Bravo) ---
+// Reads VPAD internally. Writes team ID (0=Alpha, 1=Bravo) to player + 0x2C.
+static void TeamChanger() {
+    uintptr_t p = resolvePlayerStruct();
+    if (!p) return;
+    VPADStatus status;
+    int32_t error = 0;
+    VPADRead(0, &status, 1, &error);
+    if (error != 0) return;
+    if (status.hold & VPAD_BUTTON_LEFT) {
+        writeU32(p + 0x2Cu, 0x00000000u);  // Alpha team
+    } else if (status.hold & VPAD_BUTTON_RIGHT) {
+        writeU32(p + 0x2Cu, 0x00000001u);  // Bravo team
+    }
+}
+
+// --- Inkstrike / Killer Wail / Bubbler modifiers (special weapon cheats) ---
+// These write float values to the special weapon charge rate.
+// Address 0x10537D10 = Inkstrike charge rate
+// Address 0x10535ED8 = Killer Wail charge rate
+static void FastInkstrike()  { writeU32(0x10537D10u, 0x47200000u); }  // fast charge
+static void FastKillerWail() { writeU32(0x10535ED8u, 0x49000000u); }  // fast charge
+
+// --- Big Ball (fun cheat, makes ink shot huge) ---
+static void BigBall() {
+    uintptr_t p = resolvePlayerStruct();
+    if (p) writeU32(p + 0x80u, 0x42000000u);  // special weapon size = 32.0f
 }
 
 static const Cheat ALL[] = {
@@ -340,6 +369,12 @@ static const Cheat ALL[] = {
     {"Shooter & Blaster Rapidfire",   "ch_shooterRapid",   false, ShooterBlasterRapidfire},
     {"Extended Charger Range",        "ch_chargerRange",   false, ExtendedChargerRange},
     {"Shooter Rapidfire (advanced)",  "ch_shooterRapidAdv",false, ShooterRapidfireAdv},
+    // Fun / Extras
+    {"Team Changer (D-Pad L/R)",      "ch_teamChanger",    false, TeamChanger},
+    // Special weapons
+    {"Fast Inkstrike Charge",         "ch_fastInkstrike",  false, FastInkstrike},
+    {"Fast Killer Wail Charge",       "ch_fastKillerWail", false, FastKillerWail},
+    {"Big Ball (huge ink shots)",     "ch_bigBall",        false, BigBall},
 };
 
 constexpr size_t COUNT = sizeof(ALL) / sizeof(ALL[0]);
@@ -382,25 +417,81 @@ static void applyAllCheats() {
     // GATE: Check player base pointer is initialized (using SAFE read)
     uint32_t basePtr;
     if (!safeReadU32(PLAYER_BASE_PTR_ADDR, &basePtr)) return;  // address invalid
-    if (basePtr == 0) return;  // game not initialized yet
+    if (basePtr == 0) return;  // game not initialized yet (lobby/menu)
 
-    // OPTIMIZATION: Only resolve player struct if the base pointer changed.
-    // Cache the base pointer and player struct address to avoid re-resolving
-    // every frame when the pointer hasn't changed.
-    static uint32_t cachedBasePtr = 0;
-    static uintptr_t cachedPlayer = 0;
-    if (basePtr != cachedBasePtr) {
-        cachedBasePtr = basePtr;
-        cachedPlayer = resolvePlayerStruct();
-    }
-    uintptr_t player = cachedPlayer;
+    // Resolve player struct EVERY FRAME (no caching - caching caused stale
+    // pointer crashes when transitioning between lobby/match/results)
+    uintptr_t player = resolvePlayerStruct();
 
-    // Player-relative writes (weapon overrides)
+    // --- Weapon overrides with UNDO/RESTORE ---
+    // When override is enabled: save original value on first apply, then write cheat value
+    // When override is disabled: restore original value once, then stop
+    static uint32_t origMainWeapon = 0, origSubWeapon = 0, origSpecialWeapon = 0, origInkTank = 0;
+    static bool origMainSaved = false, origSubSaved = false, origSpecSaved = false, origInkSaved = false;
+
     if (player) {
-        if (g_overrideMain)    writeU32(player + OFF_MAIN_WEAPON, g_mainWeaponId);
-        if (g_overrideSub)     writeU32(player + OFF_SUB_WEAPON,  g_subWeaponId);
-        if (g_overrideSpecial) writeU32(player + OFF_SPECIAL,     g_specialWeaponId);
-        if (g_inkTankOverride) writeU32(player + OFF_INK_TANK,    g_inkTankId);
+        // Main weapon
+        if (g_overrideMain) {
+            if (!origMainSaved) {
+                uint32_t val;
+                if (safeReadU32(player + OFF_MAIN_WEAPON, &val)) {
+                    origMainWeapon = val;
+                    origMainSaved = true;
+                }
+            }
+            writeU32(player + OFF_MAIN_WEAPON, g_mainWeaponId);
+        } else if (origMainSaved) {
+            writeU32(player + OFF_MAIN_WEAPON, origMainWeapon);
+            origMainSaved = false;
+        }
+
+        // Sub weapon
+        if (g_overrideSub) {
+            if (!origSubSaved) {
+                uint32_t val;
+                if (safeReadU32(player + OFF_SUB_WEAPON, &val)) {
+                    origSubWeapon = val;
+                    origSubSaved = true;
+                }
+            }
+            writeU32(player + OFF_SUB_WEAPON, g_subWeaponId);
+        } else if (origSubSaved) {
+            writeU32(player + OFF_SUB_WEAPON, origSubWeapon);
+            origSubSaved = false;
+        }
+
+        // Special weapon
+        if (g_overrideSpecial) {
+            if (!origSpecSaved) {
+                uint32_t val;
+                if (safeReadU32(player + OFF_SPECIAL, &val)) {
+                    origSpecialWeapon = val;
+                    origSpecSaved = true;
+                }
+            }
+            writeU32(player + OFF_SPECIAL, g_specialWeaponId);
+        } else if (origSpecSaved) {
+            writeU32(player + OFF_SPECIAL, origSpecialWeapon);
+            origSpecSaved = false;
+        }
+
+        // Ink tank
+        if (g_inkTankOverride) {
+            if (!origInkSaved) {
+                uint32_t val;
+                if (safeReadU32(player + OFF_INK_TANK, &val)) {
+                    origInkTank = val;
+                    origInkSaved = true;
+                }
+            }
+            writeU32(player + OFF_INK_TANK, g_inkTankId);
+        } else if (origInkSaved) {
+            writeU32(player + OFF_INK_TANK, origInkTank);
+            origInkSaved = false;
+        }
+    } else {
+        // Player struct not resolved (not in match) - reset saved originals
+        origMainSaved = origSubSaved = origSpecSaved = origInkSaved = false;
     }
 
     // All Red cheats - KernelWriteU32 checks OSEffectiveToPhysical before
@@ -593,6 +684,15 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[14].key, Cheats::ALL[14].name, Cheats::ALL[14].defaultValue, g_cheatEnabled[14], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[14]=v; storeBool(Cheats::ALL[14].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[15].key, Cheats::ALL[15].name, Cheats::ALL[15].defaultValue, g_cheatEnabled[15], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[15]=v; storeBool(Cheats::ALL[15].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[16].key, Cheats::ALL[16].name, Cheats::ALL[16].defaultValue, g_cheatEnabled[16], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[16]=v; storeBool(Cheats::ALL[16].key, v); });
+    }
+
+    // ---- Cheats - Extras (Team Changer + Special weapons) ----
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Extras");
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[17].key, Cheats::ALL[17].name, Cheats::ALL[17].defaultValue, g_cheatEnabled[17], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[17]=v; storeBool(Cheats::ALL[17].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[18].key, Cheats::ALL[18].name, Cheats::ALL[18].defaultValue, g_cheatEnabled[18], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[18]=v; storeBool(Cheats::ALL[18].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[19].key, Cheats::ALL[19].name, Cheats::ALL[19].defaultValue, g_cheatEnabled[19], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[19]=v; storeBool(Cheats::ALL[19].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[20].key, Cheats::ALL[20].name, Cheats::ALL[20].defaultValue, g_cheatEnabled[20], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[20]=v; storeBool(Cheats::ALL[20].key, v); });
     }
 
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
