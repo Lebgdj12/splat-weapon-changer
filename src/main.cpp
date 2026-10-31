@@ -219,10 +219,19 @@ static ConfigItemMultipleValuesPair* makePairs(
         malloc(sizeof(ConfigItemMultipleValuesPair) * count));
     if (!p) return nullptr;
     for (size_t i = 0; i < count; ++i) {
-        p[i].value = entries[i].id;
-        p[i].name  = entries[i].name;
+        p[i].value     = entries[i].id;
+        p[i].valueName = entries[i].name;
     }
     return p;
+}
+
+// Find the index in the entries array whose id == id, or 0 if not found.
+// The MultipleValues API takes a currentValueIndex, not the value itself.
+static int findWeaponIndex(const splat::WeaponEntry* entries, size_t count, uint32_t id) {
+    for (size_t i = 0; i < count; ++i) {
+        if (entries[i].id == id) return static_cast<int>(i);
+    }
+    return 0;
 }
 
 static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle root) {
@@ -261,9 +270,10 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         if (!pairs) pairs = makePairs(splat::MAIN_WEAPONS, splat::MAIN_WEAPONS_COUNT);
         if (pairs) {
             WUPSConfigItemMultipleValues_AddToCategory(
-                catMain, CfgKey::MainWeaponId, "Weapon", 0u,
-                g_mainWeaponId, pairs, splat::MAIN_WEAPONS_COUNT,
-                [](ConfigItemMultipleValues*, unsigned int v) {
+                catMain, CfgKey::MainWeaponId, "Weapon", 0,
+                findWeaponIndex(splat::MAIN_WEAPONS, splat::MAIN_WEAPONS_COUNT, g_mainWeaponId),
+                pairs, static_cast<int>(splat::MAIN_WEAPONS_COUNT),
+                [](ConfigItemMultipleValues*, uint32_t v) {
                     g_mainWeaponId = v;
                     storeInt(CfgKey::MainWeaponId, static_cast<int>(v));
                 });
@@ -290,9 +300,10 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         if (!pairs) pairs = makePairs(splat::SUB_WEAPONS, splat::SUB_WEAPONS_COUNT);
         if (pairs) {
             WUPSConfigItemMultipleValues_AddToCategory(
-                catSub, CfgKey::SubWeaponId, "Weapon", 0u,
-                g_subWeaponId, pairs, splat::SUB_WEAPONS_COUNT,
-                [](ConfigItemMultipleValues*, unsigned int v) {
+                catSub, CfgKey::SubWeaponId, "Weapon", 0,
+                findWeaponIndex(splat::SUB_WEAPONS, splat::SUB_WEAPONS_COUNT, g_subWeaponId),
+                pairs, static_cast<int>(splat::SUB_WEAPONS_COUNT),
+                [](ConfigItemMultipleValues*, uint32_t v) {
                     g_subWeaponId = v;
                     storeInt(CfgKey::SubWeaponId, static_cast<int>(v));
                 });
@@ -320,9 +331,10 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         if (!pairs) pairs = makePairs(splat::SPECIAL_WEAPONS, splat::SPECIAL_WEAPONS_COUNT);
         if (pairs) {
             WUPSConfigItemMultipleValues_AddToCategory(
-                catSpec, CfgKey::SpecialWeaponId, "Weapon", 0u,
-                g_specialWeaponId, pairs, splat::SPECIAL_WEAPONS_COUNT,
-                [](ConfigItemMultipleValues*, unsigned int v) {
+                catSpec, CfgKey::SpecialWeaponId, "Weapon", 0,
+                findWeaponIndex(splat::SPECIAL_WEAPONS, splat::SPECIAL_WEAPONS_COUNT, g_specialWeaponId),
+                pairs, static_cast<int>(splat::SPECIAL_WEAPONS_COUNT),
+                [](ConfigItemMultipleValues*, uint32_t v) {
                     g_specialWeaponId = v;
                     storeInt(CfgKey::SpecialWeaponId, static_cast<int>(v));
                 });
