@@ -145,22 +145,25 @@ static void loadInt(const char* key, int& v) {
 // ---------------------------------------------------------------------------
 // Memory access - using KernelWriteU32 (from CodePatchPlugin by theawesomecoder61)
 // ---------------------------------------------------------------------------
-// This is the EXACT approach from theawesomecoder61/CodePatchPlugin (a WORKING
-// Aroma plugin that patches game code). See src/kernel.hpp.
+// READS: use safeReadU32 which checks OSEffectiveToPhysical first.
+//   If the address is not mapped (physical = 0), skip the read (return false).
+//   This prevents DSI crashes from reading invalid addresses during pointer chasing.
 //
-// KernelWriteU32 uses:
-// - KernelCopyData from <kernel/kernel.h> (libkernel)
-// - OSEffectiveToPhysical to translate virtual -> physical
-// - ICInvalidateRange to flush instruction cache (CRITICAL for code patches)
-// - DCFlushRange to flush data cache
-//
-// This handles BOTH:
-// - RW memory (player struct, data section) - regular data writes
-// - RO memory (game code section) - instruction patches via physical copy
+// WRITES: use KernelWriteU32 which also checks OSEffectiveToPhysical.
+//   See kernel.hpp for details.
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
     return *reinterpret_cast<volatile uint32_t*>(addr);
 }
+
+// Safe read: checks OSEffectiveToPhysical before reading.
+// Returns true if the read succeeded, false if the address is invalid.
+static inline bool safeReadU32(uintptr_t addr, uint32_t* out) {
+    if (OSEffectiveToPhysical(static_cast<uint32_t>(addr)) == 0) return false;
+    *out = *reinterpret_cast<volatile uint32_t*>(addr);
+    return true;
+}
+
 static inline void writeU32(uintptr_t addr, uint32_t value) {
     KernelWriteU32(static_cast<uint32_t>(addr), value);
 }
@@ -191,24 +194,29 @@ static bool isSplatoon1Running() {
            lower == 0x10110F00u;    // JPN
 }
 
+// Resolve the player struct via pointer chain: [*0x106E46E8] + 0x290
+// Uses safeReadU32 to check OSEffectiveToPhysical before each read.
+// This prevents DSI crashes from reading invalid addresses.
 static uintptr_t resolvePlayerStruct() {
-    // Relaxed validation: just check non-zero.
-    // The strict validRam check was rejecting valid player struct addresses.
-    // arGecko doesn't use strict range checks either.
-    uint32_t p1 = readU32(PLAYER_BASE_PTR_ADDR);
+    uint32_t p1;
+    if (!safeReadU32(PLAYER_BASE_PTR_ADDR, &p1)) return 0;
     if (p1 == 0) return 0;
-    uint32_t p2 = readU32(p1 + 0x290u);
+    uint32_t p2;
+    if (!safeReadU32(p1 + 0x290u, &p2)) return 0;
     if (p2 == 0) return 0;
     return p2;
 }
 
 // Weapon struct chain: [0x106E417C] + 0x578 -> +0x760 -> weapon struct
 static uintptr_t resolveWeaponStruct() {
-    uint32_t p1 = readU32(WEAPON_BASE_PTR_ADDR);
+    uint32_t p1;
+    if (!safeReadU32(WEAPON_BASE_PTR_ADDR, &p1)) return 0;
     if (p1 == 0) return 0;
-    uint32_t p2 = readU32(p1 + 0x578u);
+    uint32_t p2;
+    if (!safeReadU32(p1 + 0x578u, &p2)) return 0;
     if (p2 == 0) return 0;
-    uint32_t p3 = readU32(p2 + 0x760u);
+    uint32_t p3;
+    if (!safeReadU32(p2 + 0x760u, &p3)) return 0;
     if (p3 == 0) return 0;
     return p3;
 }
@@ -366,22 +374,28 @@ constexpr size_t INK_TANKS_COUNT = sizeof(INK_TANKS) / sizeof(INK_TANKS[0]);
 static void applyAllCheats() {
     if (!g_enabled) return;
 
-    // GATE: Check if the player base pointer at 0x106E46E8 is initialized.
-    // This address is Splatoon-specific. If it's 0, we're not in Splatoon yet
-    // (or the game hasn't initialized the player struct).
-    // We use regular read (safe - this address is in RW data section when mapped).
-    // If the address is unmapped (wrong game), regular read might crash.
-    // To be safe, check title ID first to ensure we're in a game app.
+    // GATE: Check title ID prefix (must be a game app, not system menu)
     uint64_t tid = OSGetTitleID();
     uint32_t upper = static_cast<uint32_t>(tid >> 32);
     if (upper != 0x00050000u && upper != 0x0005000Eu) return;  // not a game
 
-    // Now safe to read game memory - we're in a game app
-    uint32_t basePtr = readU32(PLAYER_BASE_PTR_ADDR);
-    if (basePtr == 0) return;
+    // GATE: Check player base pointer is initialized (using SAFE read)
+    uint32_t basePtr;
+    if (!safeReadU32(PLAYER_BASE_PTR_ADDR, &basePtr)) return;  // address invalid
+    if (basePtr == 0) return;  // game not initialized yet
+
+    // OPTIMIZATION: Only resolve player struct if the base pointer changed.
+    // Cache the base pointer and player struct address to avoid re-resolving
+    // every frame when the pointer hasn't changed.
+    static uint32_t cachedBasePtr = 0;
+    static uintptr_t cachedPlayer = 0;
+    if (basePtr != cachedBasePtr) {
+        cachedBasePtr = basePtr;
+        cachedPlayer = resolvePlayerStruct();
+    }
+    uintptr_t player = cachedPlayer;
 
     // Player-relative writes (weapon overrides)
-    uintptr_t player = resolvePlayerStruct();
     if (player) {
         if (g_overrideMain)    writeU32(player + OFF_MAIN_WEAPON, g_mainWeaponId);
         if (g_overrideSub)     writeU32(player + OFF_SUB_WEAPON,  g_subWeaponId);
@@ -389,7 +403,8 @@ static void applyAllCheats() {
         if (g_inkTankOverride) writeU32(player + OFF_INK_TANK,    g_inkTankId);
     }
 
-    // All Red cheats - KernelWriteU32 handles both RW and RO memory
+    // All Red cheats - KernelWriteU32 checks OSEffectiveToPhysical before
+    // each write, so invalid addresses are safely skipped.
     for (size_t i = 0; i < Cheats::COUNT; ++i) {
         if (g_cheatEnabled[i]) Cheats::ALL[i].apply();
     }
