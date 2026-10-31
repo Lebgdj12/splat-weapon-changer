@@ -324,9 +324,9 @@ static void TeamChanger() {
     uintptr_t p = resolvePlayerStruct();
     if (!p) return;
     VPADStatus status;
-    int32_t error = 0;
-    VPADRead(0, &status, 1, &error);
-    if (error != 0) return;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
     if (status.hold & VPAD_BUTTON_LEFT) {
         writeU32(p + 0x2Cu, 0x00000000u);  // Alpha team
     } else if (status.hold & VPAD_BUTTON_RIGHT) {
