@@ -13,6 +13,7 @@ include $(DEVKITPRO)/wups/share/wups_rules
 
 WUT_ROOT  := $(DEVKITPRO)/wut
 WUPS_ROOT := $(DEVKITPRO)/wups
+WUMS_ROOT := $(DEVKITPRO)/wums
 
 #-------------------------------------------------------------------------------
 # Target / layout
@@ -45,12 +46,13 @@ CFLAGS += $(INCLUDE) -D__WIIU__ -D__WUT__ -D__WUPS__
 CXXFLAGS := $(CFLAGS) -std=gnu++20 -fno-rtti -fno-exceptions
 ASFLAGS  := -g $(ARCH)
 
-LDFLAGS  = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) $(WUPSSPECS)
+# Linker flags: use libkernel.ld (from CodePatchPlugin Makefile) for kernel access
+LDFLAGS  = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) -T$(WUMS_ROOT)/share/libkernel.ld $(WUPSSPECS)
 
-# Plugin needs wups + wut only (notifications removed - couldn't find header path)
-LIBS := -lwups -lwut
+# Libraries: wups + wut + wums + kernel (from CodePatchPlugin Makefile)
+LIBS := -lwups -lwut -lwums -lkernel
 
-LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT)
+LIBDIRS := $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT) $(WUMS_ROOT)
 
 #-------------------------------------------------------------------------------
 # Boilerplate pulled from wiiu-env/ftpiiu_plugin & TCPGecko-Plugin Makefiles.

@@ -37,6 +37,7 @@
 #include <wups/storage.h>
 
 #include "weapons.h"
+#include "kernel.hpp"
 
 // ---------------------------------------------------------------------------
 // Plugin metadata
@@ -140,23 +141,26 @@ static void loadInt(const char* key, int& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory access - REGULAR pointer dereference (no kernel syscalls)
+// Memory access - using KernelWriteU32 (from CodePatchPlugin by theawesomecoder61)
 // ---------------------------------------------------------------------------
-// Since we hook GX2CopyColorBufferToScanBuffer, we run in the GAME'S context.
-// Regular pointer dereference works for:
-// - Reads from any mapped memory (RW or RO)
-// - Writes to RW memory (player struct, data section)
+// This is the EXACT approach from theawesomecoder61/CodePatchPlugin (a WORKING
+// Aroma plugin that patches game code). See src/kernel.hpp.
 //
-// Regular writes to RO memory (code section) would cause a DSI crash, so
-// we SKIP all absolute-address cheats (Speedhack @ 0x105EBE40 etc.) and
-// only do player-relative writes (which are in RW data section).
+// KernelWriteU32 uses:
+// - KernelCopyData from <kernel/kernel.h> (libkernel)
+// - OSEffectiveToPhysical to translate virtual -> physical
+// - ICInvalidateRange to flush instruction cache (CRITICAL for code patches)
+// - DCFlushRange to flush data cache
+//
+// This handles BOTH:
+// - RW memory (player struct, data section) - regular data writes
+// - RO memory (game code section) - instruction patches via physical copy
 // ---------------------------------------------------------------------------
 static inline uint32_t readU32(uintptr_t addr) {
     return *reinterpret_cast<volatile uint32_t*>(addr);
 }
 static inline void writeU32(uintptr_t addr, uint32_t value) {
-    *reinterpret_cast<volatile uint32_t*>(addr) = value;
-    DCFlushRange(reinterpret_cast<void*>(addr), 4);
+    KernelWriteU32(static_cast<uint32_t>(addr), value);
 }
 static inline bool validRam(uint32_t v) {
     return v != 0 && v >= 0x10000000u && v < 0x50000000u;
@@ -396,17 +400,11 @@ static void applyAllCheats() {
         if (g_inkTankOverride) writeU32(player + OFF_INK_TANK,    g_inkTankId);
     }
 
-    // All Red cheats - but ONLY player-relative ones (safe with regular writes).
-    // Absolute-address cheats (Speedhack @ 0x105EBE40 etc.) are SKIPPED because
-    // they write to the game's read-only code section, which would cause a DSI
-    // crash with regular pointer writes. They need kernel syscalls which we're
-    // not using in this version for stability.
-    // Indices to skip: 0=Speedhack, 1=MiniJump, 8=CoverSquid, 11=Squidflop,
-    //                   14=ShooterRapid, 15=ChargerRange
+    // All Red cheats - KernelWriteU32 handles both RW and RO memory,
+    // so ALL cheats are safe to apply (including absolute-address ones
+    // that write to the game's code section).
     for (size_t i = 0; i < Cheats::COUNT; ++i) {
-        if (!g_cheatEnabled[i]) continue;
-        if (i == 0 || i == 1 || i == 8 || i == 11 || i == 14 || i == 15) continue;  // skip absolute
-        Cheats::ALL[i].apply();
+        if (g_cheatEnabled[i]) Cheats::ALL[i].apply();
     }
 }
 
