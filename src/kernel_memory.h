@@ -24,7 +24,8 @@
 
 // Staging buffer - must be cache-aligned (0x40 = 64 bytes).
 // TCPGecko uses the same alignment for their kernelCopyStagingBuffer.
-static alignas(0x40) unsigned char g_kernelStagingBuffer[64];
+// alignas goes BEFORE static (C++ syntax requirement).
+alignas(0x40) static unsigned char g_kernelStagingBuffer[64];
 
 // Copy `length` bytes from sourceBuffer to destinationBuffer using kernel
 // syscall 0x25 (SC0x25_KernelCopyData). Both addresses are virtual; they get
