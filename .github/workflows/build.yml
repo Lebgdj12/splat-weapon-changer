@@ -1,10 +1,5 @@
 name: Build Wii U Aroma Plugin
 
-# Triggers:
-#   - push to main/master
-#   - PR to main/master
-#   - manual dispatch (button "Run workflow" on the Actions tab)
-#   - when a version tag (v*) is pushed, also create a GitHub Release with the .wps attached
 on:
   push:
     branches: ["main", "master"]
@@ -15,32 +10,20 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container:
-      # Community Docker image with devkitPro, WUT, WUPS, portlibs preinstalled.
-      # Bump the tag if a newer one is published by wiiuenv.
-      image: wiiuenv/cmlwut:20230522
-
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Print toolchain versions
-        run: |
-          echo "DEVKITPRO = $DEVKITPRO"
-          echo "DEVKITPPC = $DEVKITPPC"
-          powerpc-eabi-g++ --version | head -1
-          ls -la "$DEVKITPRO/wups/share/" || true
+      - name: Build Docker image
+        run: docker build . -t splat-wps-builder
 
-      - name: Build plugin
-        run: |
-          make clean
-          make -j"$(nproc)"
+      - name: Compile plugin
+        run: docker run --rm -v "${PWD}:/project" splat-wps-builder make
 
-      - name: Verify .wps exists
+      - name: Verify .wps
         run: |
           ls -la SplatWeaponChanger.wps
-          file SplatWeaponChanger.wps || true
           test -s SplatWeaponChanger.wps
 
       - name: Upload artifact
@@ -51,18 +34,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # -----------------------------------------------------------------------
-  # Release job: only runs when a tag like v1.0.0 is pushed.
-  # Attaches the freshly built .wps to a GitHub Release.
-  # -----------------------------------------------------------------------
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - name: Download artifact from build job
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: splat-weapon-changer-wps
