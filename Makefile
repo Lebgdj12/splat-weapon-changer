@@ -13,7 +13,10 @@ include $(DEVKITPRO)/wups/share/wups_rules
 
 WUT_ROOT  := $(DEVKITPRO)/wut
 WUPS_ROOT := $(DEVKITPRO)/wups
-NOTIF_ROOT := $(DEVKITPRO)/libnotifications
+# libnotifications installs its headers to $DEVKITPRO/include (not
+# $DEVKITPRO/libnotifications/include), so we just add $DEVKITPRO to
+# LIBDIRS to get -I$DEVKITPRO/include on the compile line.
+NOTIF_ROOT := $(DEVKITPRO)
 
 #-------------------------------------------------------------------------------
 # Target / layout
