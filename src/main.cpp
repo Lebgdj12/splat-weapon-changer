@@ -27,6 +27,8 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <coreinit/title.h>
+#include <coreinit/memorymap.h>
+#include <proc_ui/procui.h>
 #include <gx2/surface.h>
 #include <gx2/swap.h>
 
@@ -399,55 +401,33 @@ static void applyAllCheats() {
 }
 
 // ---------------------------------------------------------------------------
-// Worker thread - applies cheats every frame (no hook needed)
+// GX2SwapScanBuffers hook - THE EXACT pattern from arGecko by quarky
 // ---------------------------------------------------------------------------
-// Previous versions used a GX2 hook which requires FunctionPatcherModule.
-// If the user doesn't have FunctionPatcherModule installed, the hook silently
-// fails and no cheats apply.
+// arGecko (https://git.sr.ht/~quarky/arGecko) is a WORKING gecko codehandler
+// for Aroma that works with Splatoon. It hooks GX2SwapScanBuffers (called
+// every frame by the game's render loop) and applies patches inside the hook.
 //
-// This version uses a simple thread started in ON_APPLICATION_START.
-// No hooks = no FunctionPatcherModule dependency.
-// The thread polls the player pointer and applies cheats via KernelWriteU32.
+// Key things arGecko does that my previous versions didn't:
+// 1. Hooks GX2SwapScanBuffers (not GX2CopyColorBufferToScanBuffer, not VPADRead)
+// 2. Checks ProcUIInForeground() before applying patches
+// 3. Checks OSEffectiveToPhysical() return value (in KernelWriteU32)
+//
+// This is the EXACT same pattern, adapted for our cheat menu.
 // ---------------------------------------------------------------------------
-static int workerThreadMain(int, const char**) {
-    while (g_workerRunning) {
-        applyAllCheats();
-        OSSleepTicks(OSMicrosecondsToTicks(16667));  // ~60Hz
-    }
-    return 0;
+DECL_FUNCTION(void, GX2SwapScanBuffers, void) {
+    // Call the original first so rendering still works
+    real_GX2SwapScanBuffers();
+
+    // Only apply cheats when the game is in the foreground
+    // (arGecko does this check - prevents writes during background/suspended state)
+    if (!ProcUIInForeground()) return;
+
+    // Apply all cheats - runs every frame, in game context
+    applyAllCheats();
 }
 
-static bool startWorker() {
-    if (g_workerRunning) return true;
-    g_workerStack = static_cast<uint8_t*>(memalign(8, 0x8000));
-    if (!g_workerStack) return false;
-    g_workerThread = static_cast<OSThread*>(memalign(8, sizeof(OSThread)));
-    if (!g_workerThread) { free(g_workerStack); g_workerStack = nullptr; return false; }
-    if (!OSCreateThread(g_workerThread, workerThreadMain, 0, nullptr,
-                        g_workerStack, 0x8000, 0x40,
-                        OS_THREAD_ATTRIB_AFFINITY_CPU2)) {
-        free(g_workerThread); free(g_workerStack);
-        g_workerThread = nullptr; g_workerStack = nullptr;
-        return false;
-    }
-    g_workerRunning = true;
-    OSResumeThread(g_workerThread);
-    return true;
-}
-
-static void stopWorker() {
-    if (!g_workerRunning) return;
-    g_workerRunning = false;
-    if (g_workerThread) {
-        OSJoinThread(g_workerThread, nullptr);
-        free(g_workerThread);
-        g_workerThread = nullptr;
-    }
-    if (g_workerStack) {
-        free(g_workerStack);
-        g_workerStack = nullptr;
-    }
-}
+// Tell WUPS to replace the real GX2SwapScanBuffers with our hook.
+WUPS_MUST_REPLACE(GX2SwapScanBuffers, WUPS_LOADER_LIBRARY_GX2, GX2SwapScanBuffers);
 
 // ---------------------------------------------------------------------------
 // Config menu helpers
@@ -641,12 +621,12 @@ INITIALIZE_PLUGIN() {
 }
 
 DEINITIALIZE_PLUGIN() {
-    stopWorker();
+    // Hook is auto-managed by WUPS_MUST_REPLACE. Nothing to clean up.
 }
 
 ON_APPLICATION_START() {
-    startWorker();
+    // Hook is installed by WUPS at plugin load. Nothing to do here.
 }
 
-ON_APPLICATION_ENDS()  { stopWorker(); }
-ON_APPLICATION_REQUESTS_EXIT() { stopWorker(); }
+ON_APPLICATION_ENDS()  {}
+ON_APPLICATION_REQUESTS_EXIT() {}

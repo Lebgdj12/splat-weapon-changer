@@ -18,19 +18,28 @@
 #include <wums.h>
 #include <kernel/kernel.h>
 
-inline void KernelWriteU32(uint32_t addr, uint32_t value) {
+// Write a 32-bit value to any virtual address via kernel copy.
+// Returns true if the write succeeded, false if the address was invalid.
+// Pattern from arGecko by quarky (https://git.sr.ht/~quarky/arGecko)
+inline bool KernelWriteU32(uint32_t addr, uint32_t value) {
+    // Check if the address maps to valid physical memory.
+    // arGecko does this check and skips writes to invalid addresses.
+    uint32_t phys_address = (uint32_t) OSEffectiveToPhysical(addr);
+    if (!phys_address) {
+        return false;  // bad address - skip the write
+    }
+
     // Flush source caches before the kernel copy
     ICInvalidateRange(&value, 4);
     DCFlushRange(&value, 4);
 
-    // Translate virtual -> physical for both addresses
-    auto dst = (uint32_t) OSEffectiveToPhysical(addr);
     auto src = (uint32_t) OSEffectiveToPhysical((uint32_t) &value);
 
     // Kernel copy between physical addresses - bypasses ALL virtual protections
-    KernelCopyData(dst, src, 4);
+    KernelCopyData(phys_address, src, 4);
 
     // Flush destination caches after the copy
     DCFlushRange((void *) addr, 4);
     ICInvalidateRange((void *) addr, 4);
+    return true;
 }
