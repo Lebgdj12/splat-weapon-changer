@@ -406,41 +406,33 @@ static int findWeaponIndex(const splat::WeaponEntry* entries, size_t count, uint
     return 0;
 }
 
-// Helper to add a category
-static WUPSConfigCategoryHandle makeCategory(WUPSConfigCategoryHandle root, const char* name) {
-    WUPSConfigCategoryHandle h;
-    WUPSConfigAPICreateCategoryOptionsV1 opts = {.name = name};
-    if (WUPSConfigAPI_Category_Create(opts, &h) != WUPSCONFIG_API_RESULT_SUCCESS) return nullptr;
-    if (WUPSConfigAPI_Category_AddCategory(root, h) != WUPSCONFIG_API_RESULT_SUCCESS) return nullptr;
-    return h;
-}
-
-// Helper for a bool toggle bound to a global bool
-static void addBool(WUPSConfigCategoryHandle cat, const char* key, const char* name,
-                    bool defaultVal, bool& current) {
-    WUPSConfigItemBoolean_AddToCategory(
-        cat, key, name, defaultVal, current,
-        [](ConfigItemBoolean*, bool v) {
-            // The actual write to the global is done via key-based lookup
-            // since the lambda can't capture. We'll handle this per-call.
-            // For now, store and let loadBool reload on next init.
-            // This is suboptimal but works.
-        });
-}
+// Helper macro: creates a category, adds it to root, returns on failure.
+// Defines a variable `catName` of type WUPSConfigCategoryHandle in scope.
+#define MAKE_CATEGORY(catName, root, displayName) \
+    WUPSConfigCategoryHandle catName; \
+    do { \
+        WUPSConfigAPICreateCategoryOptionsV1 _opts = {.name = displayName}; \
+        if (WUPSConfigAPI_Category_Create(_opts, &catName) != WUPSCONFIG_API_RESULT_SUCCESS) \
+            return WUPSCONFIG_API_CALLBACK_RESULT_ERROR; \
+        if (WUPSConfigAPI_Category_AddCategory(root, catName) != WUPSCONFIG_API_RESULT_SUCCESS) \
+            return WUPSCONFIG_API_CALLBACK_RESULT_ERROR; \
+    } while (0)
 
 // ---------------------------------------------------------------------------
 // Config menu open callback
 // ---------------------------------------------------------------------------
 static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle root) {
     // ---- General ----
-    if (auto cat = makeCategory(root, "General")) {
+    {
+        MAKE_CATEGORY(cat, root, "General");
         WUPSConfigItemBoolean_AddToCategory(
             cat, CfgKey::Enabled, "Plugin enabled", true, g_enabled,
             [](ConfigItemBoolean*, bool v) { g_enabled = v; storeBool(CfgKey::Enabled, v); });
     }
 
     // ---- Main weapon ----
-    if (auto cat = makeCategory(root, "Main weapon")) {
+    {
+        MAKE_CATEGORY(cat, root, "Main weapon");
         WUPSConfigItemBoolean_AddToCategory(
             cat, CfgKey::OverrideMain, "Override main weapon", true, g_overrideMain,
             [](ConfigItemBoolean*, bool v) { g_overrideMain = v; storeBool(CfgKey::OverrideMain, v); });
@@ -458,7 +450,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Sub weapon ----
-    if (auto cat = makeCategory(root, "Sub weapon")) {
+    {
+        MAKE_CATEGORY(cat, root, "Sub weapon");
         WUPSConfigItemBoolean_AddToCategory(
             cat, CfgKey::OverrideSub, "Override sub weapon", false, g_overrideSub,
             [](ConfigItemBoolean*, bool v) { g_overrideSub = v; storeBool(CfgKey::OverrideSub, v); });
@@ -476,7 +469,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Special weapon ----
-    if (auto cat = makeCategory(root, "Special weapon")) {
+    {
+        MAKE_CATEGORY(cat, root, "Special weapon");
         WUPSConfigItemBoolean_AddToCategory(
             cat, CfgKey::OverrideSpecial, "Override special weapon", false, g_overrideSpecial,
             [](ConfigItemBoolean*, bool v) { g_overrideSpecial = v; storeBool(CfgKey::OverrideSpecial, v); });
@@ -494,7 +488,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Cheats - Movement ----
-    if (auto cat = makeCategory(root, "Cheats - Movement")) {
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Movement");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[0].key,  Cheats::ALL[0].name,  Cheats::ALL[0].defaultValue,  g_cheatEnabled[0],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[0]=v;  storeBool(Cheats::ALL[0].key,  v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[1].key,  Cheats::ALL[1].name,  Cheats::ALL[1].defaultValue,  g_cheatEnabled[1],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[1]=v;  storeBool(Cheats::ALL[1].key,  v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[2].key,  Cheats::ALL[2].name,  Cheats::ALL[2].defaultValue,  g_cheatEnabled[2],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[2]=v;  storeBool(Cheats::ALL[2].key,  v); });
@@ -503,7 +498,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Cheats - Mechanics ----
-    if (auto cat = makeCategory(root, "Cheats - Mechanics")) {
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Mechanics");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[5].key,  Cheats::ALL[5].name,  Cheats::ALL[5].defaultValue,  g_cheatEnabled[5],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[5]=v;  storeBool(Cheats::ALL[5].key,  v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[6].key,  Cheats::ALL[6].name,  Cheats::ALL[6].defaultValue,  g_cheatEnabled[6],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[6]=v;  storeBool(Cheats::ALL[6].key,  v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[7].key,  Cheats::ALL[7].name,  Cheats::ALL[7].defaultValue,  g_cheatEnabled[7],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[7]=v;  storeBool(Cheats::ALL[7].key,  v); });
@@ -511,7 +507,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Cheats - Ink ----
-    if (auto cat = makeCategory(root, "Cheats - Ink")) {
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Ink");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[9].key,  Cheats::ALL[9].name,  Cheats::ALL[9].defaultValue,  g_cheatEnabled[9],  [](ConfigItemBoolean*, bool v){ g_cheatEnabled[9]=v;  storeBool(Cheats::ALL[9].key,  v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[10].key, Cheats::ALL[10].name, Cheats::ALL[10].defaultValue, g_cheatEnabled[10], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[10]=v; storeBool(Cheats::ALL[10].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[11].key, Cheats::ALL[11].name, Cheats::ALL[11].defaultValue, g_cheatEnabled[11], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[11]=v; storeBool(Cheats::ALL[11].key, v); });
@@ -534,7 +531,8 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
     }
 
     // ---- Cheats - Weapons ----
-    if (auto cat = makeCategory(root, "Cheats - Weapons")) {
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Weapons");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[12].key, Cheats::ALL[12].name, Cheats::ALL[12].defaultValue, g_cheatEnabled[12], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[12]=v; storeBool(Cheats::ALL[12].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[13].key, Cheats::ALL[13].name, Cheats::ALL[13].defaultValue, g_cheatEnabled[13], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[13]=v; storeBool(Cheats::ALL[13].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[14].key, Cheats::ALL[14].name, Cheats::ALL[14].defaultValue, g_cheatEnabled[14], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[14]=v; storeBool(Cheats::ALL[14].key, v); });
