@@ -251,9 +251,11 @@ static void Moonjump() {
     uintptr_t p = resolvePlayerStruct();
     if (p) { writeU32(p + OFF_MOONJUMP_Y, 0); writeU32(p + OFF_MOONJUMP_VEL, 0); }
 }
+// FIX: Swim Anywhere uses base pointer (NO 0x1D dereference) - Red's code:
+// 30000000 106E46E8 / 10000000 4DF9FFFE / 0012088C 43000000
 static void SwimAnywhere() {
-    uintptr_t p = resolvePlayerStruct();
-    if (p) writeU32(p + OFF_SWIM_ANYWHERE, 0x43000000u);  // 128.0f
+    uintptr_t base = resolveBasePointer();
+    if (base) writeU32(base + 0x88Cu, 0x43000000u);  // 128.0f
 }
 static void Skydiving() {
     uintptr_t p = resolvePlayerStruct();
@@ -264,6 +266,8 @@ static void Skydiving() {
 }
 
 // --- Mechanics ---
+// FIX: Disabled Drowning also writes to 2 absolute addresses (Red's code):
+// 00020000 106E868C 7AAF4CD4 / 00020000 1054BE1C 40000000
 static void FastRespawn() {
     uintptr_t p = resolvePlayerStruct();
     if (p) {
@@ -275,6 +279,8 @@ static void FastRespawn() {
 static void DisabledDrowning() {
     uintptr_t p = resolvePlayerStruct();
     if (p) writeU32(p + OFF_DROWNING, 0);
+    writeU32(0x106E868Cu, 0x7AAF4CD4u);  // nohash patch
+    writeU32(0x1054BE1Cu, 0x40000000u);  // 2.0f
 }
 static void FastSuperjump() {
     uintptr_t p = resolvePlayerStruct();
@@ -324,11 +330,13 @@ static void ExtendedChargerRange() {
     writeU32(ADDR_CHARGER_RANGE, 0x40000000u);
 }
 static void ShooterRapidfireAdv() {
-    uintptr_t w = resolveWeaponStruct();
-    if (w) {
-        writeU32(w + 0x50u, 0x00000000u);
-        writeU32(w + 0x48u, 0x40000000u);
-    }
+    // FIX: Uses 0x31 (ADD, no dereference) not 0x1D
+    // Red's code: ptr=*0x106E417C, then ADD 0x578, ADD 0x760, write at +0x50 and +0x48
+    uint32_t base;
+    if (!safeReadU32(WEAPON_BASE_PTR_ADDR, &base)) return;
+    uintptr_t addr = base + 0x578u + 0x760u;
+    writeU32(addr + 0x50u, 0x00000000u);
+    writeU32(addr + 0x48u, 0x40000000u);
 }
 
 // --- Team Changer (button-activated: D-Pad Left = Alpha, Right = Bravo) ---
@@ -411,6 +419,90 @@ static void WalkEnemyInk() {
     }
 }
 
+// === NEW VERIFIED CHEATS from Red's AGME01.xml ===
+
+// Max Damage Output - Red's code: 0x1D deref, write 0x0FFFFFFF at player+0x7FC
+static void MaxDamageOutput() {
+    uintptr_t p = resolvePlayerStruct();
+    if (p) writeU32(p + 0x7FCu, 0x0FFFFFFFu);
+}
+
+// Infinite Special Duration - Red's code: 0x1D deref + 0x31 add
+// Write 0x0FFFFFFF at player+0x7FC and 0x0000000F at player+0x808
+static void InfiniteSpecialDuration() {
+    uintptr_t p = resolvePlayerStruct();
+    if (p) {
+        writeU32(p + 0x7FCu, 0x0FFFFFFFu);
+        writeU32(p + 0x808u, 0x0000000Fu);
+    }
+}
+
+// Disable Bubbler Shield - Red's code: write 0x00000000 at 0x10509904
+static void DisableBubblerShield() {
+    writeU32(0x10509904u, 0x00000000u);
+}
+
+// Charger Rapidfire (hold A) - Red's code uses 0x31 ADD from 0x106E417C
+// Write 0x005E0000 at base+0x578+0x760+0x70 and +0x74
+static void ChargerRapidfire() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (!(status.hold & VPAD_BUTTON_A)) return;
+    uint32_t base;
+    if (!safeReadU32(WEAPON_BASE_PTR_ADDR, &base)) return;
+    uintptr_t addr = base + 0x578u + 0x760u;
+    writeU32(addr + 0x70u, 0x005E0000u);
+    writeU32(addr + 0x74u, 0x005E0000u);
+}
+
+// Slosher Rapidfire (hold B) - Red's code uses 0x31 ADD from 0x106E417C
+// Write 0x00000001 at base+0x578+0x760+0x178
+static void SlosherRapidfire() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (!(status.hold & VPAD_BUTTON_B)) return;
+    uint32_t base;
+    if (!safeReadU32(WEAPON_BASE_PTR_ADDR, &base)) return;
+    uintptr_t addr = base + 0x578u + 0x760u;
+    writeU32(addr + 0x178u, 0x00000001u);
+}
+
+// Splatling Rapidfire (hold L) - Red's code uses 0x31 ADD from 0x106E46E8
+// Write at base+0x760+0x88, +0x8C, +0x90
+static void SplatlingRapidfire() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (!(status.hold & VPAD_BUTTON_L)) return;
+    uintptr_t base = resolveBasePointer();
+    if (!base) return;
+    uintptr_t addr = base + 0x760u;
+    writeU32(addr + 0x88u, 0x00000087u);
+    writeU32(addr + 0x8Cu, 0x00080087u);
+    writeU32(addr + 0x90u, 0x3F800000u);
+}
+
+// Roller Rapidfire (hold X) - Red's code uses 0x31 ADD from 0x106E417C
+// Write at base+0x578+0x760+0xB0, +0xB4, +0xB8
+static void RollerRapidfire() {
+    VPADStatus status;
+    VPADReadError error;
+    VPADRead(VPAD_CHAN_0, &status, 1, &error);
+    if (error != VPAD_READ_SUCCESS) return;
+    if (!(status.hold & VPAD_BUTTON_X)) return;
+    uint32_t base;
+    if (!safeReadU32(WEAPON_BASE_PTR_ADDR, &base)) return;
+    uintptr_t addr = base + 0x578u + 0x760u;
+    writeU32(addr + 0xB0u, 0x00000010u);
+    writeU32(addr + 0xB4u, 0x00000001u);
+    writeU32(addr + 0xB8u, 0x00000010u);
+}
+
 static const Cheat ALL[] = {
     // Movement
     {"Speedhack",                     "ch_speedhack",      false, Speedhack},
@@ -433,11 +525,18 @@ static const Cheat ALL[] = {
     {"Shooter & Blaster Rapidfire",   "ch_shooterRapid",   false, ShooterBlasterRapidfire},
     {"Extended Charger Range",        "ch_chargerRange",   false, ExtendedChargerRange},
     {"Shooter Rapidfire (advanced)",  "ch_shooterRapidAdv",false, ShooterRapidfireAdv},
+    {"Charger Rapidfire (hold A)",    "ch_chargerRapid",   false, ChargerRapidfire},
+    {"Slosher Rapidfire (hold B)",    "ch_slosherRapid",   false, SlosherRapidfire},
+    {"Splatling Rapidfire (hold L)",  "ch_splatlingRapid", false, SplatlingRapidfire},
+    {"Roller Rapidfire (hold X)",     "ch_rollerRapid",    false, RollerRapidfire},
     // Fun / Extras (all verified against Red's AGME01.xml)
     {"Team Changer (D-Pad L/R)",      "ch_teamChanger",    false, TeamChanger},
     {"Freefly (hold A to fly)",       "ch_freefly",        false, Freefly},
     {"Ink Tank Refiller (hold L)",    "ch_inkRefiller",    false, InkTankRefiller},
     {"Walk on Enemy Ink",             "ch_walkEnemyInk",   false, WalkEnemyInk},
+    {"Max Damage Output",             "ch_maxDamage",      false, MaxDamageOutput},
+    {"Infinite Special Duration",     "ch_infSpecDur",     false, InfiniteSpecialDuration},
+    {"Disable Bubbler Shield",        "ch_noBubbler",      false, DisableBubblerShield},
     // Special weapons (verified addresses from Red's XML)
     {"Fast Inkstrike Charge",         "ch_fastInkstrike",  false, FastInkstrike},
     {"Fast Killer Wail Charge",       "ch_fastKillerWail", false, FastKillerWail},
@@ -742,7 +841,7 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         }
     }
 
-    // ---- Cheats - Weapons ----
+    // ---- Cheats - Weapons (includes all rapidfires) ----
     {
         MAKE_CATEGORY(cat, root, "Cheats - Weapons");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[12].key, Cheats::ALL[12].name, Cheats::ALL[12].defaultValue, g_cheatEnabled[12], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[12]=v; storeBool(Cheats::ALL[12].key, v); });
@@ -750,17 +849,24 @@ static WUPSConfigAPICallbackStatus configMenuOpened(WUPSConfigCategoryHandle roo
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[14].key, Cheats::ALL[14].name, Cheats::ALL[14].defaultValue, g_cheatEnabled[14], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[14]=v; storeBool(Cheats::ALL[14].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[15].key, Cheats::ALL[15].name, Cheats::ALL[15].defaultValue, g_cheatEnabled[15], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[15]=v; storeBool(Cheats::ALL[15].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[16].key, Cheats::ALL[16].name, Cheats::ALL[16].defaultValue, g_cheatEnabled[16], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[16]=v; storeBool(Cheats::ALL[16].key, v); });
-    }
-
-    // ---- Cheats - Extras (verified cheats only, no fakes) ----
-    {
-        MAKE_CATEGORY(cat, root, "Cheats - Extras");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[17].key, Cheats::ALL[17].name, Cheats::ALL[17].defaultValue, g_cheatEnabled[17], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[17]=v; storeBool(Cheats::ALL[17].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[18].key, Cheats::ALL[18].name, Cheats::ALL[18].defaultValue, g_cheatEnabled[18], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[18]=v; storeBool(Cheats::ALL[18].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[19].key, Cheats::ALL[19].name, Cheats::ALL[19].defaultValue, g_cheatEnabled[19], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[19]=v; storeBool(Cheats::ALL[19].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[20].key, Cheats::ALL[20].name, Cheats::ALL[20].defaultValue, g_cheatEnabled[20], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[20]=v; storeBool(Cheats::ALL[20].key, v); });
+    }
+
+    // ---- Cheats - Extras (verified cheats from Red's XML) ----
+    {
+        MAKE_CATEGORY(cat, root, "Cheats - Extras");
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[21].key, Cheats::ALL[21].name, Cheats::ALL[21].defaultValue, g_cheatEnabled[21], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[21]=v; storeBool(Cheats::ALL[21].key, v); });
         WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[22].key, Cheats::ALL[22].name, Cheats::ALL[22].defaultValue, g_cheatEnabled[22], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[22]=v; storeBool(Cheats::ALL[22].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[23].key, Cheats::ALL[23].name, Cheats::ALL[23].defaultValue, g_cheatEnabled[23], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[23]=v; storeBool(Cheats::ALL[23].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[24].key, Cheats::ALL[24].name, Cheats::ALL[24].defaultValue, g_cheatEnabled[24], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[24]=v; storeBool(Cheats::ALL[24].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[25].key, Cheats::ALL[25].name, Cheats::ALL[25].defaultValue, g_cheatEnabled[25], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[25]=v; storeBool(Cheats::ALL[25].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[26].key, Cheats::ALL[26].name, Cheats::ALL[26].defaultValue, g_cheatEnabled[26], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[26]=v; storeBool(Cheats::ALL[26].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[27].key, Cheats::ALL[27].name, Cheats::ALL[27].defaultValue, g_cheatEnabled[27], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[27]=v; storeBool(Cheats::ALL[27].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[28].key, Cheats::ALL[28].name, Cheats::ALL[28].defaultValue, g_cheatEnabled[28], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[28]=v; storeBool(Cheats::ALL[28].key, v); });
+        WUPSConfigItemBoolean_AddToCategory(cat, Cheats::ALL[29].key, Cheats::ALL[29].name, Cheats::ALL[29].defaultValue, g_cheatEnabled[29], [](ConfigItemBoolean*, bool v){ g_cheatEnabled[29]=v; storeBool(Cheats::ALL[29].key, v); });
     }
 
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
